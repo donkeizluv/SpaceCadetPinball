@@ -1,0 +1,14 @@
+[package]
+name = "SpaceCadetPinballRust"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+imgui = "0.12.0"
+imgui-glow-renderer = "0.13.0"
+imgui-sdl2-support = "0.13.0"
+sdl2 = { version = "0.37.0", features = ["mixer"] }
+# imgui = "0.12"
+# imgui-sdl2-support = "0.13.0"
+# imgui-glow-renderer = "0.13.0"                      # or imgui-opengl-renderer

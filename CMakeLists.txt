@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0...3.5)
+cmake_minimum_required(VERSION 3.0...4.3.2)
 project(SpaceCadetPinball)
 
 set(CMAKE_CXX_STANDARD 11)
@@ -10,8 +10,18 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMakeModules")
 
 # On Windows, set paths to SDL-devel packages here
 if(WIN32)
-   list(APPEND SDL2_PATH "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2")
-   list(APPEND SDL2_MIXER_PATH "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2_mixer")
+
+list(APPEND SDL2_PATH "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2/")
+list(APPEND SDL2_MIXER_PATH "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2_mixer/")
+
+# Pre-set cache variables so find_package resolves headers and DLLs from the
+# flat Libs layout (no lib/ subdirectory, no .dll.a import library present).
+# MinGW can link directly against a .dll when given the full path.
+set(SDL2_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2" CACHE PATH "SDL2 include directory" FORCE)
+set(SDL2_LIBRARY_TEMP "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2/SDL2.dll" CACHE FILEPATH "SDL2 library" FORCE)
+set(SDL2_MIXER_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2_mixer" CACHE PATH "SDL2_mixer include directory" FORCE)
+set(SDL2_MIXER_LIBRARY "${CMAKE_CURRENT_LIST_DIR}/Libs/SDL2_mixer/SDL2_mixer.dll" CACHE FILEPATH "SDL2_mixer library" FORCE)
+
 endif()
 
 # Link mingw libs static
@@ -218,6 +228,11 @@ endif()
 
 target_link_libraries(SpaceCadetPinball ${SDL2_LIBRARY} ${SDL2_MIXER_LIBRARY})
 
+# CLI executable
+add_executable(SpaceCadetPinballCli
+        Cli/main.cpp
+        )
+
 # On Windows, copy DLL to output
 if(WIN32)
     list(GET SDL2_LIBRARY -1 SDL2_DLL_PATH)
@@ -232,6 +247,7 @@ if(WIN32)
     add_custom_command(TARGET SpaceCadetPinball POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DLL_PATH}/SDL2.dll" $<TARGET_FILE_DIR:SpaceCadetPinball>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_MIXER_DLL_PATH}/SDL2_mixer.dll" $<TARGET_FILE_DIR:SpaceCadetPinball>
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_LIST_DIR}/Assets" $<TARGET_FILE_DIR:SpaceCadetPinball>
         )
 endif()
 
