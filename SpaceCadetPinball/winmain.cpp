@@ -306,7 +306,7 @@ void winmain::MainLoop()
 		if (DispFrameRate)
 		{
 			auto curTime = Clock::now();
-			if (curTime - prevTime > DurationMs(1000))
+			// if (curTime - prevTime > DurationMs(1000))
 			{
 				char buf[60];
 				auto elapsedSec = DurationMs(curTime - prevTime).count() * 0.001;
