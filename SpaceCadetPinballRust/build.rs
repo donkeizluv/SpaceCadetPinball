@@ -68,7 +68,11 @@ fn main() {
             let dst = profile_dir.join(dll_name);
             if src.exists() {
                 fs::copy(&src, &dst).unwrap_or_else(|err| {
-                    panic!("failed to copy {} to {}: {err}", src.display(), dst.display())
+                    panic!(
+                        "failed to copy {} to {}: {err}",
+                        src.display(),
+                        dst.display()
+                    )
                 });
             }
         }
