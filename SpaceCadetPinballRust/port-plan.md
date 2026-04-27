@@ -100,6 +100,20 @@ Last Updated: 2026-04-26
 - The gameplay-owned visual snapshot now also drives the bumper sequence family from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frame.
 - The gameplay-owned visual snapshot now also drives the kickback sequence family from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frame.
 - The gameplay-owned visual snapshot now also drives the flag sequence family from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frame.
+- The gameplay-owned visual snapshot now also drives the gate sequence family from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frame.
+- The gameplay-owned visual snapshot now also drives the kickout sequence family from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frame.
+- The gameplay-owned visual snapshot now also drives the sink, one-way, rebounder, rollover, target, and tripwire sequence families from live simplified gameplay state instead of leaving those multi-frame sequences pinned to their first frames.
+- The gameplay-owned visual snapshot now also drives the remaining static-table and light-group sequence banks from live simplified gameplay state instead of leaving those sequences pinned to their first frames.
+- The gameplay-owned visual snapshot now also drives the remaining default table-light and rollover-light banks from live simplified gameplay state and live ball position instead of leaving those light states pinned to `0.0`.
+- The gameplay-owned light-group sequence bank now also uses per-family region-aware progress derived from live ball position and simplified table state instead of one shared generic blend across all named groups.
+- The gameplay-owned static-table sequence bank now also uses per-group region-aware progress, with the ramp entries following ramp semantics and `v_bloc1` following blocker-style lower-table semantics instead of one shared blend.
+- The remaining generic lane-ready and ball-region signals now live in gameplay-owned `SimulationState` instead of being recomputed ad hoc inside the render-facing visual builder.
+- The derived left/right/top/bottom/ramp table-region semantics now also live in gameplay-owned `SimulationState`, so the visual builder consumes gameplay-owned region signals instead of deriving those semantics itself.
+- The remaining broad blend formulas for sequence and light families now also live in gameplay-owned `SimulationState` as named visual signals, so the visual builder consumes gameplay-owned focus/state channels instead of assembling those mixes inline.
+- The gameplay table now also owns lightweight ramp-side and lower-hazard activity signals that persist across frames, so related sequence families can respond to simple gameplay activity instead of only static blends.
+- The gameplay table now also owns lightweight orbit-side and target-side activity signals that persist across frames, so tripwire, target, and related light-group families can follow simple gameplay activity instead of only generic focus blends.
+- The gameplay table now also owns a lightweight bumper activity signal that persists across frames, so the bumper sequence family can follow simple gameplay activity instead of only a generic focus blend.
+- The gameplay table now also owns a lightweight lane/skill-shot activity signal that persists across frames, so the skill-shot and lane visuals can follow simple gameplay activity instead of only a generic progress blend.
 - The gameplay table landing zone is no longer concentrated in a single `src/gameplay/components/table.rs` file: input-state translation, text-box queue/status ownership, and visual composition now live in focused gameplay-table submodules behind the same public API.
 - Controlled Sprite Reintegration is well underway: plunger and flipper frames now come from named DAT sprite sequences, the window title exposes the active scene and controlled sprite selections for debugging, gameplay-owned visual state now covers the current table mechanics slice, an initial HUD slice, and a substantially larger table-light slice, and `engine::render` no longer owns the current group-name mapping, the current HUD widget set, the current mechanic sequence set, the current live bitmap sprite path, the current visual composition/order, the current HUD layout decode, the current sequence-frame lookup, the current HUD digit lookup, or the current named-bitmap/debug-label lookups for that slice.
 
@@ -222,7 +236,21 @@ Last Updated: 2026-04-26
 - [x] Turn the multi-frame bumper family into gameplay-driven sequence selections.
 - [x] Turn the multi-frame kickback family into gameplay-driven sequence selections.
 - [x] Turn the multi-frame flag family into gameplay-driven sequence selections.
-- [ ] Expand that gameplay-owned visual snapshot further to cover additional gameplay-driven table elements.
+- [x] Turn the multi-frame gate family into gameplay-driven sequence selections.
+- [x] Turn the multi-frame kickout family into gameplay-driven sequence selections.
+- [x] Turn the sink, one-way, rebounder, rollover, target, and tripwire families into gameplay-driven sequence selections.
+- [x] Turn the remaining static-table and light-group sequence banks into gameplay-driven sequence selections.
+- [x] Turn the remaining default table-light and rollover-light banks into gameplay-driven light selections.
+- [x] Refine the gameplay-owned light-group sequence bank from one generic progress blend into per-family region-aware selection.
+- [x] Refine the gameplay-owned static-table sequence bank from one generic progress blend into per-group region-aware selection.
+- [x] Move the remaining generic lane-ready and ball-region progress signals out of the render-facing visual builder and into gameplay-owned simulation state.
+- [x] Move the derived left/right/top/bottom/ramp region semantics out of the render-facing visual builder and into gameplay-owned simulation state.
+- [x] Move the remaining broad sequence/light blend formulas out of the render-facing visual builder and into gameplay-owned simulation state as named visual signals.
+- [x] Add lightweight gameplay-owned ramp and lower-hazard activity signals and route related families through them.
+- [x] Add lightweight gameplay-owned orbit and target activity signals and route related families through them.
+- [x] Add lightweight gameplay-owned bumper activity signal and route the bumper sequence family through it.
+- [x] Add lightweight gameplay-owned lane/skill-shot activity signal and route skill-shot/lane visuals through it.
+- [ ] Expand that gameplay-owned visual snapshot further to cover additional gameplay-driven table elements beyond the current simplified sequence/light-bank ownership.
 
 ### Phase 4: Gameplay scaffolding
 
@@ -297,6 +325,30 @@ Last Updated: 2026-04-26
 
 ## Validation Log
 
+- 2026-04-27: `cargo check` passed after adding gameplay-owned orbit and target activity signals and routing related families through them.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-owned orbit/target activity pass.
+- 2026-04-27: `cargo check` passed after adding gameplay-owned ramp and lower-hazard activity signals and routing related families through them.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-owned activity-signal pass.
+- 2026-04-27: `cargo check` passed after moving the remaining broad sequence/light blend formulas into gameplay-owned simulation state as named visual signals.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-owned visual-signal pass.
+- 2026-04-27: `cargo check` passed after moving the derived left/right/top/bottom/ramp region semantics into gameplay-owned simulation state.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-owned derived-region pass.
+- 2026-04-27: `cargo check` passed after moving the remaining generic lane-ready and ball-region progress signals into gameplay-owned simulation state.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-owned region-signal pass.
+- 2026-04-27: `cargo check` passed after refining the gameplay-owned static-table sequence bank to use per-group region-aware progress.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the region-aware static-table pass.
+- 2026-04-27: `cargo check` passed after refining the gameplay-owned light-group sequence bank to use per-family region-aware progress.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the region-aware light-group pass.
+- 2026-04-27: `cargo check` passed after turning the remaining default table-light and rollover-light banks into gameplay-driven selections.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the remaining-light-bank gameplay-driven pass.
+- 2026-04-27: `cargo check` passed after turning the remaining static-table and light-group sequence banks into gameplay-driven selections.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the remaining-sequence-bank gameplay-driven pass.
+- 2026-04-27: `cargo check` passed after turning the sink, one-way, rebounder, rollover, target, and tripwire sequence families into gameplay-driven selections.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the multi-family gameplay-driven sequence pass.
+- 2026-04-27: `cargo check` passed after turning the kickout sequence family into gameplay-driven selections.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-driven kickout pass.
+- 2026-04-27: `cargo check` passed after turning the gate sequence family into gameplay-driven selections.
+- 2026-04-27: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the gameplay-driven gate pass.
 - 2026-04-26: `cargo check` passed after splitting `src/gameplay/components/table.rs` into smaller gameplay-table submodules.
 - 2026-04-26: `cargo check` passed after bulk-adding a large remaining bank of individual DAT light groups through default gameplay-owned light states.
 - 2026-04-26: `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` launched successfully after the bulk remaining-light-bank pass.
@@ -340,4 +392,16 @@ Last Updated: 2026-04-26
 - Controlled Sprite Reintegration now also includes a validated gameplay-driven bumper slice, turning that multi-frame sequence family from a default-state placeholder into live gameplay-owned selections.
 - Controlled Sprite Reintegration now also includes a validated gameplay-driven kickback slice, turning that multi-frame sequence family from a default-state placeholder into live gameplay-owned selections.
 - Controlled Sprite Reintegration now also includes a validated gameplay-driven flag slice, turning that multi-frame sequence family from a default-state placeholder into live gameplay-owned selections.
+- Controlled Sprite Reintegration now also includes a validated gameplay-driven gate slice, turning that multi-frame sequence family from a default-state placeholder into live gameplay-owned selections.
+- Controlled Sprite Reintegration now also includes a validated gameplay-driven kickout slice, turning that multi-frame sequence family from a default-state placeholder into live gameplay-owned selections.
+- Controlled Sprite Reintegration now also includes a validated multi-family slice, turning the sink, one-way, rebounder, rollover, target, and tripwire sequence families from default-state placeholders into live gameplay-owned selections in one pass because they shared the same visual-selection code path.
+- Controlled Sprite Reintegration now also includes a validated remaining-sequence-bank slice, turning the static-table and light-group banks from default-state placeholders into live gameplay-owned selections in one pass because they shared the same visual-selection code path.
+- Controlled Sprite Reintegration now also includes a validated remaining-light-bank slice, turning the default table-light and rollover-light banks from `0.0` placeholders into live gameplay-owned selections in one pass because they shared the same light-selection code path.
+- Controlled Sprite Reintegration now also includes a validated region-aware light-group slice, replacing the old one-blend light-group approximation with per-family progress derived from left/right/top/ramp-style table semantics.
+- Controlled Sprite Reintegration now also includes a validated region-aware static-table slice, replacing the old one-blend static-table approximation with per-group progress derived from ramp and blocker-style table semantics.
+- Controlled Sprite Reintegration now also includes a validated gameplay-owned region-signal slice, moving the remaining generic lane-ready and ball-region progress ownership out of the render-facing visual builder and into gameplay state.
+- Controlled Sprite Reintegration now also includes a validated gameplay-owned derived-region slice, moving the derived left/right/top/bottom/ramp table semantics out of the render-facing visual builder and into gameplay state.
+- Controlled Sprite Reintegration now also includes a validated gameplay-owned visual-signal slice, moving the remaining broad sequence/light blend formulas out of the render-facing visual builder and into gameplay state as named focus channels.
+- Controlled Sprite Reintegration now also includes a validated gameplay-owned activity-signal slice, adding lightweight ramp-side and lower-hazard activity channels that related families can follow instead of relying only on static blends.
+- Controlled Sprite Reintegration now also includes a validated gameplay-owned orbit/target activity slice, adding lightweight orbit-side and target-side activity channels that tripwire, target, and related light-group families can follow instead of relying only on generic focus blends.
 - The gameplay-table landing zone has now been structurally split into smaller submodules, reducing pressure on `src/gameplay/components/table.rs` before additional gameplay-owned sprite reintegration continues.

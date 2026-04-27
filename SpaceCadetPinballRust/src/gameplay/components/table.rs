@@ -28,6 +28,44 @@ pub struct PinballTable {
     simulation: SimulationState,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TableRegionState {
+    pub lane_ready: f32,
+    pub ball_x: f32,
+    pub ball_y: f32,
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+    pub ramp: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TableVisualSignalState {
+    pub score_progress: f32,
+    pub launch_progress: f32,
+    pub drain_progress: f32,
+    pub impact_focus: f32,
+    pub recovery_focus: f32,
+    pub lane_focus: f32,
+    pub hazard_focus: f32,
+    pub target_focus: f32,
+    pub orbit_focus: f32,
+    pub field_light_focus: f32,
+    pub rollover_light_focus: f32,
+    pub fuel_focus: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TableActivityState {
+    pub ramp_activity: f32,
+    pub lower_hazard_activity: f32,
+    pub orbit_activity: f32,
+    pub target_activity: f32,
+    pub bumper_activity: f32,
+    pub lane_activity: f32,
+}
+
 pub struct SimulationState {
     pub ball: Option<Ball>,
     pub plunger_charge: f32,
@@ -35,6 +73,9 @@ pub struct SimulationState {
     pub drain_count: u64,
     pub left_flipper_active: bool,
     pub right_flipper_active: bool,
+    pub regions: TableRegionState,
+    pub visual_signals: TableVisualSignalState,
+    pub activities: TableActivityState,
     pub edge_manager: EdgeManager,
     info_box: TextBoxState,
     mission_box: TextBoxState,
@@ -52,6 +93,9 @@ impl Default for SimulationState {
             drain_count: 0,
             left_flipper_active: false,
             right_flipper_active: false,
+            regions: TableRegionState::default(),
+            visual_signals: TableVisualSignalState::default(),
+            activities: TableActivityState::default(),
             edge_manager: EdgeManager::for_table_bounds(600.0, 416.0),
             info_box: TextBoxState::default(),
             mission_box: TextBoxState::default(),
@@ -80,6 +124,7 @@ impl PinballTable {
         table.add_component(FlipperMechanic::new(ComponentId(1), "flipper"));
         table.add_component(PlungerMechanic::new(ComponentId(2), "plunger"));
         table.add_component(DrainMechanic::new(ComponentId(3), "drain"));
+        table.simulation.refresh_derived_state();
         table.refresh_text_boxes();
         table
     }
@@ -153,6 +198,7 @@ impl PinballTable {
 
         self.message_log.push(message);
         self.broadcast_message(message);
+        self.simulation.refresh_derived_state();
     }
 
     pub fn sync_bridge_state(&mut self, bridge_state: &TableBridgeState) {
@@ -180,6 +226,7 @@ impl PinballTable {
                 component.tick(&mut self.simulation, &table_state, dt);
             }
         }
+        self.simulation.refresh_derived_state();
     }
 
     pub fn step_simulation(&mut self, dt: f32) {
@@ -196,6 +243,8 @@ impl PinballTable {
         }
 
         self.input_state.pending_start = false;
+        self.simulation.update_activity_state(dt);
+        self.simulation.refresh_derived_state();
         self.simulation.info_box.tick(dt);
         self.simulation.mission_box.tick(dt);
         self.refresh_text_boxes();
@@ -208,5 +257,154 @@ impl PinballTable {
                 component.on_message(message, &mut self.simulation, &table_state);
             }
         }
+    }
+}
+
+impl SimulationState {
+    fn update_activity_state(&mut self, dt: f32) {
+        let decay = (1.0 - dt.max(0.0) * 1.6).clamp(0.0, 1.0);
+        self.activities.ramp_activity *= decay;
+        self.activities.lower_hazard_activity *= decay;
+        self.activities.orbit_activity *= decay;
+        self.activities.target_activity *= decay;
+        self.activities.bumper_activity *= decay;
+        self.activities.lane_activity *= decay;
+
+        if let Some(ball) = self.ball.as_ref() {
+            let ball_x = (ball.position.x / 600.0).clamp(0.0, 1.0);
+            let ball_y = (ball.position.y / 416.0).clamp(0.0, 1.0);
+            let top = (1.0 - ball_y).clamp(0.0, 1.0);
+            let right = ball_x;
+            let left = (1.0 - ball_x).clamp(0.0, 1.0);
+            let horizontal_speed = (ball.velocity.x.abs() / 700.0).clamp(0.0, 1.0);
+            let total_speed = ((ball.velocity.x.abs() + ball.velocity.y.abs()) / 900.0).clamp(0.0, 1.0);
+            let bumper_presence = ((top * 0.25)
+                + (ball_y * 0.15)
+                + (ball.velocity.y.abs() / 700.0 * 0.30)
+                + (total_speed * 0.30))
+                .clamp(0.0, 1.0);
+            let lane_presence = ((ball_x * 0.15)
+                + (top * 0.40)
+                + (self.plunger_charge * 0.25)
+                + (self.regions.lane_ready * 0.20))
+                .clamp(0.0, 1.0);
+            let ramp_presence = ((ball.position.x / 600.0).clamp(0.0, 1.0) * 0.55
+                + (1.0 - (ball.position.y / 416.0)).clamp(0.0, 1.0) * 0.45)
+                .clamp(0.0, 1.0);
+            let lower_hazard_presence = (((ball.position.y / 416.0).clamp(0.0, 1.0) * 0.60)
+                + ((1.0 - (ball.position.x / 600.0).clamp(0.0, 1.0)) * 0.25)
+                + ((ball.velocity.y.max(0.0) / 600.0).clamp(0.0, 1.0) * 0.15))
+                .clamp(0.0, 1.0);
+            let orbit_presence = ((top * 0.45) + (right * 0.35) + (horizontal_speed * 0.20))
+                .clamp(0.0, 1.0);
+            let target_presence = ((top * 0.35)
+                + (right.max(left) * 0.20)
+                + (horizontal_speed * 0.20)
+                + (total_speed * 0.25))
+                .clamp(0.0, 1.0);
+
+            self.activities.ramp_activity = self.activities.ramp_activity.max(ramp_presence);
+            self.activities.lower_hazard_activity = self
+                .activities
+                .lower_hazard_activity
+                .max(lower_hazard_presence);
+            self.activities.orbit_activity = self.activities.orbit_activity.max(orbit_presence);
+            self.activities.target_activity = self.activities.target_activity.max(target_presence);
+            self.activities.bumper_activity = self.activities.bumper_activity.max(bumper_presence);
+            self.activities.lane_activity = self.activities.lane_activity.max(lane_presence);
+        }
+
+        if self.drain_count > self.previous_drain_count {
+            self.activities.lower_hazard_activity = 1.0;
+        }
+
+        if self.launch_count > self.previous_launch_count {
+            self.activities.ramp_activity = self.activities.ramp_activity.max(0.75);
+            self.activities.orbit_activity = self.activities.orbit_activity.max(0.70);
+            self.activities.target_activity = self.activities.target_activity.max(0.55);
+            self.activities.bumper_activity = self.activities.bumper_activity.max(0.60);
+            self.activities.lane_activity = self.activities.lane_activity.max(0.80);
+        }
+    }
+
+    fn refresh_derived_state(&mut self) {
+        let launch_progress = (self.launch_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
+        let drain_progress = (self.drain_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
+        let score_value = self
+            .launch_count
+            .saturating_mul(1000)
+            .saturating_add(self.drain_count.saturating_mul(500));
+        let score_progress = (score_value.min(8_000) as f32 / 8_000.0).clamp(0.0, 1.0);
+
+        self.regions = self
+            .ball
+            .as_ref()
+            .map(|ball| TableRegionState {
+                lane_ready: if ball.is_launched() { self.plunger_charge } else { 1.0 },
+                ball_x: (ball.position.x / 600.0).clamp(0.0, 1.0),
+                ball_y: (1.0 - (ball.position.y / 416.0)).clamp(0.0, 1.0),
+                left: (1.0 - (ball.position.x / 600.0).clamp(0.0, 1.0)).clamp(0.0, 1.0),
+                right: (ball.position.x / 600.0).clamp(0.0, 1.0),
+                top: (1.0 - (ball.position.y / 416.0)).clamp(0.0, 1.0),
+                bottom: (ball.position.y / 416.0).clamp(0.0, 1.0),
+                ramp: (((ball.position.x / 600.0).clamp(0.0, 1.0) * 0.55)
+                    + ((1.0 - (ball.position.y / 416.0)).clamp(0.0, 1.0) * 0.30)
+                    + (launch_progress * 0.15))
+                    .clamp(0.0, 1.0),
+            })
+            .unwrap_or(TableRegionState {
+                lane_ready: self.plunger_charge,
+                ball_x: 0.0,
+                ball_y: 0.0,
+                left: 1.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 1.0,
+                ramp: (launch_progress * 0.15).clamp(0.0, 1.0),
+            });
+
+        self.visual_signals = TableVisualSignalState {
+            score_progress,
+            launch_progress,
+            drain_progress,
+            impact_focus: ((score_progress * 0.45)
+                + (self.plunger_charge * 0.35)
+                + (launch_progress * 0.20))
+                .clamp(0.0, 1.0),
+            recovery_focus: ((drain_progress * 0.45)
+                + (launch_progress * 0.35)
+                + (self.regions.lane_ready * 0.20))
+                .clamp(0.0, 1.0),
+            lane_focus: ((self.regions.lane_ready * 0.45)
+                + (launch_progress * 0.35)
+                + (score_progress * 0.20))
+                .clamp(0.0, 1.0),
+            hazard_focus: ((drain_progress * 0.50)
+                + (self.plunger_charge * 0.30)
+                + (score_progress * 0.20))
+                .clamp(0.0, 1.0),
+            target_focus: ((score_progress * 0.55)
+                + (launch_progress * 0.25)
+                + (drain_progress * 0.20))
+                .clamp(0.0, 1.0),
+            orbit_focus: ((launch_progress * 0.45)
+                + (score_progress * 0.35)
+                + (self.plunger_charge * 0.20))
+                .clamp(0.0, 1.0),
+            field_light_focus: ((self.regions.ball_x * 0.35)
+                + (self.regions.ball_y * 0.25)
+                + (score_progress * 0.20)
+                + (launch_progress * 0.20))
+                .clamp(0.0, 1.0),
+            rollover_light_focus: ((self.regions.ball_y * 0.40)
+                + (self.regions.lane_ready * 0.20)
+                + (launch_progress * 0.20)
+                + (score_progress * 0.20))
+                .clamp(0.0, 1.0),
+            fuel_focus: ((self.plunger_charge * 0.45)
+                + (self.regions.lane_ready * 0.30)
+                + (self.regions.ball_x * 0.25))
+                .clamp(0.0, 1.0),
+        };
     }
 }
