@@ -45,6 +45,18 @@ pub struct MessageFont {
     glyphs: Vec<Option<MessageFontGlyph>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VisualCollisionMetadata {
+    pub collision_group: u32,
+    pub smoothness: f32,
+    pub elasticity: f32,
+    pub threshold: f32,
+    pub boost: f32,
+    pub soft_hit_sound_id: i32,
+    pub hard_hit_sound_id: i32,
+    pub wall_float_count: usize,
+}
+
 impl MessageFont {
     pub fn glyph(&self, character: u8) -> Option<MessageFontGlyph> {
         self.glyphs.get(character as usize).copied().flatten()
@@ -220,6 +232,26 @@ impl GroupData {
             EntryPayload::RawBytes(bytes) => Some(bytes.as_slice()),
             _ => None,
         }
+    }
+
+    pub fn short_values(&self, entry_type: FieldType) -> Option<Vec<i16>> {
+        let bytes = self.raw_bytes(entry_type)?;
+        Some(
+            bytes
+                .chunks_exact(2)
+                .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect(),
+        )
+    }
+
+    pub fn float_values(&self, entry_type: FieldType) -> Option<Vec<f32>> {
+        let bytes = self.raw_bytes(entry_type)?;
+        Some(
+            bytes
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+        )
     }
 }
 
@@ -444,6 +476,161 @@ impl DatFile {
                 line_height,
                 glyphs,
             })
+        }
+    }
+
+    pub fn visual_collision_metadata(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<VisualCollisionMetadata> {
+        let state_index = self.visual_state_group_index(group_index, group_index_offset)?;
+        let mut metadata = VisualCollisionMetadata::default();
+
+        if let Some(short_values) = self
+            .group(state_index)
+            .and_then(|group| group.short_values(FieldType::ShortArray))
+        {
+            let mut index = 0;
+            while index + 1 < short_values.len() {
+                match short_values[index] {
+                    300 => {
+                        let material_group = short_values[index + 1].max(0) as usize;
+                        self.apply_material_metadata(material_group, &mut metadata);
+                    }
+                    304 => metadata.soft_hit_sound_id = i32::from(short_values[index + 1]),
+                    400 => {
+                        let kicker_group = short_values[index + 1].max(0) as usize;
+                        self.apply_kicker_metadata(kicker_group, &mut metadata);
+                    }
+                    406 => metadata.hard_hit_sound_id = i32::from(short_values[index + 1]),
+                    602 => {
+                        let shift = short_values[index + 1].max(0) as u32;
+                        metadata.collision_group |= 1_u32.checked_shl(shift).unwrap_or(0);
+                    }
+                    1500 => {
+                        index += 7;
+                        continue;
+                    }
+                    _ => {}
+                }
+                index += 2;
+            }
+        }
+
+        if metadata.collision_group == 0 {
+            metadata.collision_group = 1;
+        }
+
+        if let Some(float_values) = self
+            .group(state_index)
+            .and_then(|group| group.float_values(FieldType::FloatArray))
+            && float_values.first().copied() == Some(600.0)
+            && float_values.len() >= 2
+        {
+            let raw_wall_type = float_values[1].floor() as isize - 1;
+            metadata.wall_float_count = match raw_wall_type {
+                0 => 1,
+                1 => 2,
+                value if value > 1 => value as usize,
+                _ => 0,
+            };
+        }
+
+        Some(metadata)
+    }
+
+    fn visual_state_group_index(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<usize> {
+        let state_count = self.query_visual_states(group_index)?;
+        if group_index_offset > state_count {
+            return None;
+        }
+        if group_index_offset == 0 {
+            return Some(group_index);
+        }
+
+        let state_index = group_index.checked_add(group_index_offset)?;
+        let short_values = self
+            .group(state_index)?
+            .short_values(FieldType::ShortValue)?;
+        match short_values.first().copied() {
+            Some(201) => Some(state_index),
+            _ => None,
+        }
+    }
+
+    fn query_visual_states(&self, group_index: usize) -> Option<usize> {
+        let short_values = self
+            .group(group_index)?
+            .short_values(FieldType::ShortValue)?;
+        if short_values.first().copied()? != 200 {
+            return None;
+        }
+        short_values
+            .get(1)
+            .copied()
+            .map(|value| value.max(0) as usize)
+    }
+
+    fn apply_material_metadata(
+        &self,
+        material_group: usize,
+        metadata: &mut VisualCollisionMetadata,
+    ) {
+        let Some(float_values) = self
+            .group(material_group)
+            .and_then(|group| group.float_values(FieldType::FloatArray))
+        else {
+            return;
+        };
+
+        for pair in float_values.chunks_exact(2) {
+            match pair[0].floor() as i32 {
+                301 => metadata.smoothness = pair[1],
+                302 => metadata.elasticity = pair[1],
+                304 => metadata.soft_hit_sound_id = pair[1].floor() as i32,
+                _ => {}
+            }
+        }
+    }
+
+    fn apply_kicker_metadata(&self, kicker_group: usize, metadata: &mut VisualCollisionMetadata) {
+        let Some(float_values) = self
+            .group(kicker_group)
+            .and_then(|group| group.float_values(FieldType::FloatArray))
+        else {
+            return;
+        };
+
+        let mut index = 0;
+        while index + 1 < float_values.len() {
+            match float_values[index].floor() as i32 {
+                401 => metadata.threshold = float_values[index + 1],
+                402 => metadata.boost = float_values[index + 1],
+                404 => index += 4,
+                406 => metadata.hard_hit_sound_id = float_values[index + 1].floor() as i32,
+                _ => {}
+            }
+            index += 2;
+        }
+    }
+}
+
+impl Default for VisualCollisionMetadata {
+    fn default() -> Self {
+        Self {
+            collision_group: 0,
+            smoothness: 0.95,
+            elasticity: 0.6,
+            threshold: 8.9999999e10,
+            boost: 0.0,
+            soft_hit_sound_id: 0,
+            hard_hit_sound_id: 0,
+            wall_float_count: 0,
         }
     }
 }

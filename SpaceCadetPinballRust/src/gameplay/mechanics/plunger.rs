@@ -1,31 +1,34 @@
 use crate::engine::physics::Ball;
 use crate::gameplay::components::{
-    ComponentId, GameplayComponent, SimulationState, TableInputState, TableMessage,
+    ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
+    TableMessage,
 };
 
 pub struct PlungerMechanic {
-    id: ComponentId,
-    name: &'static str,
+    state: ComponentState,
     charging: bool,
 }
 
 impl PlungerMechanic {
     pub fn new(id: ComponentId, name: &'static str) -> Self {
+        Self::from_state(ComponentState::new(id, name).with_control("PlungerControl"))
+    }
+
+    pub fn from_state(state: ComponentState) -> Self {
         Self {
-            id,
-            name,
+            state,
             charging: false,
         }
     }
 }
 
 impl GameplayComponent for PlungerMechanic {
-    fn id(&self) -> ComponentId {
-        self.id
+    fn state(&self) -> &ComponentState {
+        &self.state
     }
 
-    fn name(&self) -> &str {
-        self.name
+    fn state_mut(&mut self) -> &mut ComponentState {
+        &mut self.state
     }
 
     fn on_message(
@@ -35,15 +38,21 @@ impl GameplayComponent for PlungerMechanic {
         _table_state: &TableInputState,
     ) {
         match message {
-            TableMessage::StartGame => {
+            TableMessage::StartGame
+            | TableMessage::Code(MessageCode::StartGamePlayer1, _)
+            | TableMessage::Code(MessageCode::NewGame, _)
+            | TableMessage::Code(MessageCode::PlungerFeedBall, _) => {
                 if simulation.ball.is_none() {
                     simulation.ball = Some(Ball::ready_in_launch_lane());
                 }
             }
-            TableMessage::PlungerPressed => {
+            TableMessage::PlungerPressed
+            | TableMessage::Code(MessageCode::PlungerInputPressed, _) => {
                 self.charging = true;
             }
-            TableMessage::PlungerReleased => {
+            TableMessage::PlungerReleased
+            | TableMessage::Code(MessageCode::PlungerInputReleased, _)
+            | TableMessage::Code(MessageCode::PlungerLaunchBall, _) => {
                 self.charging = false;
             }
             _ => {}

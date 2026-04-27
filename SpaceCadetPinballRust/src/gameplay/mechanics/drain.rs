@@ -1,30 +1,32 @@
 use crate::gameplay::components::{
-    ComponentId, GameplayComponent, SimulationState, TableInputState, TableMessage,
+    ComponentId, ComponentState, GameplayComponent, SimulationState, TableInputState, TableMessage,
 };
 
 pub struct DrainMechanic {
-    id: ComponentId,
-    name: &'static str,
+    state: ComponentState,
     drain_y: f32,
 }
 
 impl DrainMechanic {
     pub fn new(id: ComponentId, name: &'static str) -> Self {
+        Self::from_state(ComponentState::new(id, name).with_control("BallDrainControl"))
+    }
+
+    pub fn from_state(state: ComponentState) -> Self {
         Self {
-            id,
-            name,
+            state,
             drain_y: 408.0,
         }
     }
 }
 
 impl GameplayComponent for DrainMechanic {
-    fn id(&self) -> ComponentId {
-        self.id
+    fn state(&self) -> &ComponentState {
+        &self.state
     }
 
-    fn name(&self) -> &str {
-        self.name
+    fn state_mut(&mut self) -> &mut ComponentState {
+        &mut self.state
     }
 
     fn on_message(

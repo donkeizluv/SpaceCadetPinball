@@ -1,17 +1,23 @@
+mod builder;
 mod input;
 mod text_box;
 mod visuals;
 
 use std::collections::HashMap;
 
+use crate::assets::DatFile;
 use crate::engine::TableBridgeState;
-use crate::engine::physics::{Ball, EdgeManager};
-use crate::gameplay::mechanics::{DrainMechanic, FlipperMechanic, PlungerMechanic};
+use crate::engine::physics::{
+    Ball, CollisionComponentMetadata, CollisionComponentRegistry, EdgeManager,
+};
 
 use super::component::GameplayComponent;
 use super::group::{ComponentGroup, ComponentId};
-use super::messages::TableMessage;
+use super::messages::{MessageCode, TableMessage};
 
+pub use builder::{
+    ComponentDefinition, ComponentKind, TableLinkReport, default_component_definitions,
+};
 pub use input::TableInputState;
 pub use visuals::{
     BitmapVisualState, HudVisualState, LightVisualState, NumberWidgetVisualState,
@@ -26,6 +32,7 @@ pub struct PinballTable {
     input_state: TableInputState,
     message_log: Vec<TableMessage>,
     simulation: SimulationState,
+    link_report: TableLinkReport,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -77,6 +84,7 @@ pub struct SimulationState {
     pub visual_signals: TableVisualSignalState,
     pub activities: TableActivityState,
     pub edge_manager: EdgeManager,
+    pub collision_components: CollisionComponentRegistry,
     info_box: TextBoxState,
     mission_box: TextBoxState,
     previous_ball_present: bool,
@@ -97,6 +105,7 @@ impl Default for SimulationState {
             visual_signals: TableVisualSignalState::default(),
             activities: TableActivityState::default(),
             edge_manager: EdgeManager::for_table_bounds(600.0, 416.0),
+            collision_components: CollisionComponentRegistry::default(),
             info_box: TextBoxState::default(),
             mission_box: TextBoxState::default(),
             previous_ball_present: false,
@@ -114,16 +123,29 @@ impl Default for PinballTable {
             input_state: TableInputState::default(),
             message_log: Vec::new(),
             simulation: SimulationState::default(),
+            link_report: TableLinkReport::default(),
         }
     }
 }
 
 impl PinballTable {
     pub fn new() -> Self {
+        Self::from_component_definitions(&default_component_definitions(), None)
+    }
+
+    pub fn from_dat(dat_file: &DatFile) -> Self {
+        Self::from_component_definitions(&default_component_definitions(), Some(dat_file))
+    }
+
+    pub fn from_component_definitions(
+        definitions: &[ComponentDefinition],
+        dat_file: Option<&DatFile>,
+    ) -> Self {
         let mut table = Self::default();
-        table.add_component(FlipperMechanic::new(ComponentId(1), "flipper"));
-        table.add_component(PlungerMechanic::new(ComponentId(2), "plunger"));
-        table.add_component(DrainMechanic::new(ComponentId(3), "drain"));
+        table.link_report = builder::install_components(&mut table, definitions, dat_file);
+        if let Some(dat_file) = dat_file {
+            table.register_collision_metadata(dat_file);
+        }
         table.simulation.refresh_derived_state();
         table.refresh_text_boxes();
         table
@@ -137,11 +159,27 @@ impl PinballTable {
         self.components.register(id, name);
     }
 
+    pub fn register_component_with_group_index(
+        &mut self,
+        id: ComponentId,
+        name: impl Into<String>,
+        group_index: Option<i32>,
+    ) {
+        self.components
+            .register_with_group_index(id, name, group_index);
+    }
+
     pub fn add_component(&mut self, component: impl GameplayComponent + 'static) {
+        self.add_boxed_component(Box::new(component));
+    }
+
+    pub fn add_boxed_component(&mut self, component: Box<dyn GameplayComponent>) {
         let id = component.id();
         let name = component.name().to_string();
-        self.components.register(id, name);
-        self.component_slots.insert(id, Box::new(component));
+        let group_index = component.group_index();
+        self.components
+            .register_with_group_index(id, name, group_index);
+        self.component_slots.insert(id, component);
     }
 
     pub fn component(&self, id: ComponentId) -> Option<&dyn GameplayComponent> {
@@ -155,8 +193,29 @@ impl PinballTable {
         }
     }
 
+    pub fn find_component(&self, name: &str) -> Option<&dyn GameplayComponent> {
+        self.components.find(name).and_then(|id| self.component(id))
+    }
+
+    pub fn find_component_by_group_index(
+        &self,
+        group_index: i32,
+    ) -> Option<&dyn GameplayComponent> {
+        self.components
+            .find_by_group_index(group_index)
+            .and_then(|id| self.component(id))
+    }
+
     pub fn component_count(&self) -> usize {
         self.component_slots.len()
+    }
+
+    pub fn collision_component_count(&self) -> usize {
+        self.simulation.collision_components.len()
+    }
+
+    pub fn link_report(&self) -> &TableLinkReport {
+        &self.link_report
     }
 
     pub fn active_ball(&self) -> Option<&Ball> {
@@ -194,6 +253,19 @@ impl PinballTable {
             TableMessage::StartGame => self.input_state.pending_start = true,
             TableMessage::Nudge(vector) => self.input_state.pending_nudge = Some(vector),
             TableMessage::Pause | TableMessage::Resume => {}
+            TableMessage::Code(code, _) => match code {
+                MessageCode::LeftFlipperInputPressed => self.input_state.left_flipper = true,
+                MessageCode::LeftFlipperInputReleased => self.input_state.left_flipper = false,
+                MessageCode::RightFlipperInputPressed => self.input_state.right_flipper = true,
+                MessageCode::RightFlipperInputReleased => self.input_state.right_flipper = false,
+                MessageCode::PlungerInputPressed => self.input_state.plunger_pulling = true,
+                MessageCode::PlungerInputReleased => self.input_state.plunger_pulling = false,
+                MessageCode::StartGamePlayer1 | MessageCode::NewGame => {
+                    self.input_state.pending_start = true;
+                }
+                MessageCode::Pause | MessageCode::Resume => {}
+                _ => {}
+            },
         }
 
         self.message_log.push(message);
@@ -258,6 +330,36 @@ impl PinballTable {
             }
         }
     }
+
+    fn register_collision_metadata(&mut self, dat_file: &DatFile) {
+        for component in self.component_slots.values() {
+            let Some(group_index) = component.group_index() else {
+                continue;
+            };
+            if group_index < 0 {
+                continue;
+            }
+
+            let Some(metadata) = dat_file.visual_collision_metadata(group_index as usize, 0) else {
+                continue;
+            };
+
+            self.simulation
+                .collision_components
+                .register(CollisionComponentMetadata {
+                    component_id: component.id(),
+                    group_index,
+                    collision_group: metadata.collision_group,
+                    smoothness: metadata.smoothness,
+                    elasticity: metadata.elasticity,
+                    threshold: metadata.threshold,
+                    boost: metadata.boost,
+                    soft_hit_sound_id: metadata.soft_hit_sound_id,
+                    hard_hit_sound_id: metadata.hard_hit_sound_id,
+                    wall_float_count: metadata.wall_float_count,
+                });
+        }
+    }
 }
 
 impl SimulationState {
@@ -277,7 +379,8 @@ impl SimulationState {
             let right = ball_x;
             let left = (1.0 - ball_x).clamp(0.0, 1.0);
             let horizontal_speed = (ball.velocity.x.abs() / 700.0).clamp(0.0, 1.0);
-            let total_speed = ((ball.velocity.x.abs() + ball.velocity.y.abs()) / 900.0).clamp(0.0, 1.0);
+            let total_speed =
+                ((ball.velocity.x.abs() + ball.velocity.y.abs()) / 900.0).clamp(0.0, 1.0);
             let bumper_presence = ((top * 0.25)
                 + (ball_y * 0.15)
                 + (ball.velocity.y.abs() / 700.0 * 0.30)
@@ -295,8 +398,8 @@ impl SimulationState {
                 + ((1.0 - (ball.position.x / 600.0).clamp(0.0, 1.0)) * 0.25)
                 + ((ball.velocity.y.max(0.0) / 600.0).clamp(0.0, 1.0) * 0.15))
                 .clamp(0.0, 1.0);
-            let orbit_presence = ((top * 0.45) + (right * 0.35) + (horizontal_speed * 0.20))
-                .clamp(0.0, 1.0);
+            let orbit_presence =
+                ((top * 0.45) + (right * 0.35) + (horizontal_speed * 0.20)).clamp(0.0, 1.0);
             let target_presence = ((top * 0.35)
                 + (right.max(left) * 0.20)
                 + (horizontal_speed * 0.20)
@@ -340,7 +443,11 @@ impl SimulationState {
             .ball
             .as_ref()
             .map(|ball| TableRegionState {
-                lane_ready: if ball.is_launched() { self.plunger_charge } else { 1.0 },
+                lane_ready: if ball.is_launched() {
+                    self.plunger_charge
+                } else {
+                    1.0
+                },
                 ball_x: (ball.position.x / 600.0).clamp(0.0, 1.0),
                 ball_y: (1.0 - (ball.position.y / 416.0)).clamp(0.0, 1.0),
                 left: (1.0 - (ball.position.x / 600.0).clamp(0.0, 1.0)).clamp(0.0, 1.0),

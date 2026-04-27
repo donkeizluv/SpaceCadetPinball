@@ -4,12 +4,13 @@ mod group_name;
 pub mod messages;
 pub mod table;
 
-pub use component::GameplayComponent;
+pub use component::{ComponentState, GameplayComponent};
 pub use group::{ComponentGroup, ComponentId};
 pub use group_name::*;
-pub use messages::TableMessage;
+pub use messages::{MessageCode, TableMessage};
 pub use table::{
-    BitmapVisualState, HudVisualState, LightVisualState, NumberWidgetVisualState, PinballTable,
-    SequenceVisualState, SimulationState, TableInputState, TableVisual, TableVisualState,
-    TextBoxVisualState,
+    BitmapVisualState, ComponentDefinition, ComponentKind, HudVisualState, LightVisualState,
+    NumberWidgetVisualState, PinballTable, SequenceVisualState, SimulationState, TableInputState,
+    TableLinkReport, TableVisual, TableVisualState, TextBoxVisualState,
+    default_component_definitions,
 };

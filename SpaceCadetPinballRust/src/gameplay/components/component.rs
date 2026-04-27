@@ -2,10 +2,66 @@ use super::group::ComponentId;
 use super::messages::TableMessage;
 use super::table::{SimulationState, TableInputState};
 
-pub trait GameplayComponent {
-    fn id(&self) -> ComponentId;
+#[derive(Debug, Clone)]
+pub struct ComponentState {
+    pub id: ComponentId,
+    pub active: bool,
+    pub message_field: i32,
+    pub group_name: String,
+    pub group_index: Option<i32>,
+    pub control_name: Option<&'static str>,
+    pub scoring: Vec<i32>,
+}
 
-    fn name(&self) -> &str;
+impl ComponentState {
+    pub fn new(id: ComponentId, group_name: impl Into<String>) -> Self {
+        Self {
+            id,
+            active: true,
+            message_field: 0,
+            group_name: group_name.into(),
+            group_index: None,
+            control_name: None,
+            scoring: Vec::new(),
+        }
+    }
+
+    pub fn with_group_index(mut self, group_index: i32) -> Self {
+        self.group_index = Some(group_index);
+        self
+    }
+
+    pub fn with_control(mut self, control_name: &'static str) -> Self {
+        self.control_name = Some(control_name);
+        self
+    }
+
+    pub fn with_scoring(mut self, scoring: impl Into<Vec<i32>>) -> Self {
+        self.scoring = scoring.into();
+        self
+    }
+}
+
+pub trait GameplayComponent {
+    fn state(&self) -> &ComponentState;
+
+    fn state_mut(&mut self) -> &mut ComponentState;
+
+    fn id(&self) -> ComponentId {
+        self.state().id
+    }
+
+    fn name(&self) -> &str {
+        &self.state().group_name
+    }
+
+    fn group_index(&self) -> Option<i32> {
+        self.state().group_index
+    }
+
+    fn is_active(&self) -> bool {
+        self.state().active
+    }
 
     fn on_message(
         &mut self,

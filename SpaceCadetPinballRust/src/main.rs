@@ -15,7 +15,10 @@ fn main() -> Result<(), String> {
     let (mut game_state, asset_status_message) = try_load_game_state();
     let mut current_window_title = asset_status_message.clone();
     let asset_load_failed = game_state.is_none();
-    let mut table = gameplay::PinballTable::new();
+    let mut table = game_state
+        .as_ref()
+        .map(|state| gameplay::PinballTable::from_dat(&state.dat_file))
+        .unwrap_or_else(gameplay::PinballTable::new);
     let mut render_state = engine::render::RenderState::new();
     let mut stepper = engine::time::FixedStepper::new(Duration::from_secs_f64(1.0 / 120.0));
     let mut last_frame_time = Instant::now();

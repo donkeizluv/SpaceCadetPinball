@@ -111,46 +111,37 @@ fn light_group_sequence_progress(group_name: &'static str, signals: ProgressSign
                 .clamp(0.0, 1.0)
         }
         "l_trek_lights" => {
-            ((signals.left * 0.40) + (signals.top * 0.30) + (signals.launch * 0.30))
-                .clamp(0.0, 1.0)
+            ((signals.left * 0.40) + (signals.top * 0.30) + (signals.launch * 0.30)).clamp(0.0, 1.0)
         }
-        "right_target_lights" => {
-            ((signals.right * 0.30)
-                + (signals.top * 0.15)
-                + (signals.launch * 0.15)
-                + (signals.target_activity * 0.40))
-                .clamp(0.0, 1.0)
-        }
-        "r_trek_lights" => {
-            ((signals.right * 0.25)
-                + (signals.top * 0.20)
-                + (signals.score * 0.15)
-                + (signals.orbit_activity * 0.40))
-                .clamp(0.0, 1.0)
-        }
+        "right_target_lights" => ((signals.right * 0.30)
+            + (signals.top * 0.15)
+            + (signals.launch * 0.15)
+            + (signals.target_activity * 0.40))
+            .clamp(0.0, 1.0),
+        "r_trek_lights" => ((signals.right * 0.25)
+            + (signals.top * 0.20)
+            + (signals.score * 0.15)
+            + (signals.orbit_activity * 0.40))
+            .clamp(0.0, 1.0),
         "bmpr_inc_lights" | "bumper_target_lights" => {
             ((signals.top * 0.45) + (signals.score * 0.35) + (signals.plunger * 0.20))
                 .clamp(0.0, 1.0)
         }
-        "bpr_solotgt_lights" => {
-            ((signals.right * 0.20)
-                + (signals.score * 0.20)
-                + (signals.launch * 0.15)
-                + (signals.target_activity * 0.45))
-                .clamp(0.0, 1.0)
-        }
+        "bpr_solotgt_lights" => ((signals.right * 0.20)
+            + (signals.score * 0.20)
+            + (signals.launch * 0.15)
+            + (signals.target_activity * 0.45))
+            .clamp(0.0, 1.0),
         "bsink_arrow_lights" => {
             ((signals.bottom * 0.45) + (signals.drain * 0.35) + (signals.left * 0.20))
                 .clamp(0.0, 1.0)
         }
         "ramp_bmpr_inc_lights" | "ramp_tgt_lights" => signals.ramp,
-        "top_circle_tgt_lights" | "top_target_lights" => {
-            ((signals.top * 0.20)
-                + (signals.score * 0.15)
-                + (signals.launch * 0.15)
-                + (signals.target_activity * 0.50))
-                .clamp(0.0, 1.0)
-        }
+        "top_circle_tgt_lights" | "top_target_lights" => ((signals.top * 0.20)
+            + (signals.score * 0.15)
+            + (signals.launch * 0.15)
+            + (signals.target_activity * 0.50))
+            .clamp(0.0, 1.0),
         _ => ((signals.score * 0.35)
             + (signals.launch * 0.30)
             + (signals.drain * 0.20)
@@ -225,13 +216,17 @@ impl PinballTable {
         } else {
             ((launch_progress * 0.7) + (drain_progress * 0.3)).clamp(0.0, 1.0)
         };
-        let bumper_progress = self.simulation.activities.bumper_activity.max(
-            self.simulation.visual_signals.impact_focus * 0.6,
-        );
+        let bumper_progress = self
+            .simulation
+            .activities
+            .bumper_activity
+            .max(self.simulation.visual_signals.impact_focus * 0.6);
         let kickout_progress = self.simulation.visual_signals.recovery_focus;
-        let sink_progress = self.simulation.activities.lower_hazard_activity.max(
-            self.simulation.visual_signals.hazard_focus * 0.6,
-        );
+        let sink_progress = self
+            .simulation
+            .activities
+            .lower_hazard_activity
+            .max(self.simulation.visual_signals.hazard_focus * 0.6);
         let gate_progress = self.simulation.visual_signals.lane_focus;
         let flag_progress =
             ((launch_progress * 0.55) + (drain_progress * 0.25) + (score_progress * 0.20))
@@ -239,12 +234,16 @@ impl PinballTable {
         let oneway_progress = self.simulation.visual_signals.lane_focus;
         let rebounder_progress = self.simulation.visual_signals.impact_focus;
         let rollover_progress = self.simulation.visual_signals.lane_focus;
-        let target_progress = self.simulation.activities.target_activity.max(
-            self.simulation.visual_signals.target_focus * 0.6,
-        );
-        let tripwire_progress = self.simulation.activities.orbit_activity.max(
-            self.simulation.visual_signals.orbit_focus * 0.6,
-        );
+        let target_progress = self
+            .simulation
+            .activities
+            .target_activity
+            .max(self.simulation.visual_signals.target_focus * 0.6);
+        let tripwire_progress = self
+            .simulation
+            .activities
+            .orbit_activity
+            .max(self.simulation.visual_signals.orbit_focus * 0.6);
         let default_table_light_progress = self.simulation.visual_signals.field_light_focus;
         let rollover_light_progress = self.simulation.visual_signals.rollover_light_focus;
         let fuel_rollover_light_progress = self.simulation.visual_signals.fuel_focus;
@@ -310,12 +309,32 @@ impl PinballTable {
         push_sequence_family(&mut visuals, &BUMPER_SEQUENCE_GROUPS, bumper_progress, 0.11);
         push_sequence_family(&mut visuals, &FLAG_SEQUENCE_GROUPS, flag_progress, 0.23);
         push_sequence_family(&mut visuals, &GATE_SEQUENCE_GROUPS, gate_progress, 0.29);
-        push_sequence_family(&mut visuals, &KICKBACK_SEQUENCE_GROUPS, kickback_progress, 0.17);
-        push_sequence_family(&mut visuals, &KICKOUT_SEQUENCE_GROUPS, kickout_progress, 0.19);
+        push_sequence_family(
+            &mut visuals,
+            &KICKBACK_SEQUENCE_GROUPS,
+            kickback_progress,
+            0.17,
+        );
+        push_sequence_family(
+            &mut visuals,
+            &KICKOUT_SEQUENCE_GROUPS,
+            kickout_progress,
+            0.19,
+        );
         push_sequence_family(&mut visuals, &SINK_SEQUENCE_GROUPS, sink_progress, 0.13);
         push_sequence_family(&mut visuals, &ONEWAY_SEQUENCE_GROUPS, oneway_progress, 0.07);
-        push_sequence_family(&mut visuals, &REBOUNDER_SEQUENCE_GROUPS, rebounder_progress, 0.21);
-        push_sequence_family(&mut visuals, &ROLLOVER_SEQUENCE_GROUPS, rollover_progress, 0.05);
+        push_sequence_family(
+            &mut visuals,
+            &REBOUNDER_SEQUENCE_GROUPS,
+            rebounder_progress,
+            0.21,
+        );
+        push_sequence_family(
+            &mut visuals,
+            &ROLLOVER_SEQUENCE_GROUPS,
+            rollover_progress,
+            0.05,
+        );
 
         for group_name in STATIC_TABLE_SEQUENCE_GROUPS {
             visuals.push(TableVisual::Sequence(SequenceVisualState {
@@ -336,7 +355,11 @@ impl PinballTable {
         }));
         visuals.push(TableVisual::Sequence(SequenceVisualState {
             group_name: SKILL_SHOT_LIGHTS_GROUP_NAME,
-            frame_fraction: self.simulation.activities.lane_activity.max(lane_ready_progress * 0.6),
+            frame_fraction: self
+                .simulation
+                .activities
+                .lane_activity
+                .max(lane_ready_progress * 0.6),
         }));
         visuals.push(TableVisual::Sequence(SequenceVisualState {
             group_name: GOAL_LIGHTS_GROUP_NAME,
@@ -368,15 +391,19 @@ impl PinballTable {
         }));
         visuals.push(TableVisual::Sequence(SequenceVisualState {
             group_name: WORM_HOLE_LIGHTS_GROUP_NAME,
-            frame_fraction: self
-                .simulation
-                .activities
-                .orbit_activity
-                .max((score_progress * 0.20 + launch_progress * 0.20 + target_progress * 0.20).clamp(0.0, 1.0)),
+            frame_fraction: self.simulation.activities.orbit_activity.max(
+                (score_progress * 0.20 + launch_progress * 0.20 + target_progress * 0.20)
+                    .clamp(0.0, 1.0),
+            ),
         }));
 
         push_sequence_family(&mut visuals, &TARGET_SEQUENCE_GROUPS, target_progress, 0.03);
-        push_sequence_family(&mut visuals, &TRIPWIRE_SEQUENCE_GROUPS, tripwire_progress, 0.17);
+        push_sequence_family(
+            &mut visuals,
+            &TRIPWIRE_SEQUENCE_GROUPS,
+            tripwire_progress,
+            0.17,
+        );
 
         if let Some(ball) = self.simulation.ball.as_ref() {
             visuals.push(TableVisual::Light(LightVisualState {
