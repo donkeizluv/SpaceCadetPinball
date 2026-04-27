@@ -15,8 +15,12 @@ pub struct Ball {
 
 impl Ball {
     pub fn ready_in_launch_lane() -> Self {
+        Self::ready_at(Vec2::new(560.0, 382.0))
+    }
+
+    pub fn ready_at(position: Vec2) -> Self {
         Self {
-            position: Vec2::new(560.0, 382.0),
+            position,
             velocity: Vec2::ZERO,
             radius: 6.0,
             launched: false,
@@ -55,6 +59,11 @@ impl Ball {
     }
 
     pub fn step(&mut self, dt: f32) {
+        if !self.launched {
+            self.velocity = Vec2::ZERO;
+            return;
+        }
+
         self.velocity.y += GRAVITY * dt;
         self.position.x += self.velocity.x * dt;
         self.position.y += self.velocity.y * dt;
@@ -79,5 +88,23 @@ impl Ball {
             center: self.position,
             radius: self.radius,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::math::Vec2;
+
+    use super::Ball;
+
+    #[test]
+    fn ready_ball_does_not_fall_before_launch() {
+        let mut ball = Ball::ready_at(Vec2::new(100.0, 200.0));
+
+        ball.step(1.0);
+
+        assert_eq!(ball.position, Vec2::new(100.0, 200.0));
+        assert_eq!(ball.velocity, Vec2::ZERO);
+        assert!(!ball.is_launched());
     }
 }

@@ -2,11 +2,19 @@ use super::group::ComponentId;
 use super::messages::TableMessage;
 use super::table::{SimulationState, TableInputState};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollisionGeometryKind {
+    WallAttributes,
+    OnewayVisual,
+    VisualCircleAttribute306,
+}
+
 #[derive(Debug, Clone)]
 pub struct ComponentState {
     pub id: ComponentId,
     pub active: bool,
     pub message_field: i32,
+    pub sprite_index: i32,
     pub group_name: String,
     pub group_index: Option<i32>,
     pub control_name: Option<&'static str>,
@@ -19,6 +27,7 @@ impl ComponentState {
             id,
             active: true,
             message_field: 0,
+            sprite_index: -1,
             group_name: group_name.into(),
             group_index: None,
             control_name: None,
@@ -61,6 +70,18 @@ pub trait GameplayComponent {
 
     fn is_active(&self) -> bool {
         self.state().active
+    }
+
+    fn collision_geometry_kind(&self) -> CollisionGeometryKind {
+        CollisionGeometryKind::WallAttributes
+    }
+
+    fn collision_edge_active(&self, _slot: u8) -> bool {
+        self.is_active()
+    }
+
+    fn collision_edge_offset(&self, _slot: u8, _collision_component_offset: f32) -> f32 {
+        0.0
     }
 
     fn on_message(

@@ -5,13 +5,14 @@ mod visuals;
 
 use std::collections::HashMap;
 
-use crate::assets::DatFile;
+use crate::assets::{DatFile, VisualCollisionEdge};
 use crate::engine::TableBridgeState;
+use crate::engine::math::Vec2;
 use crate::engine::physics::{
     Ball, CollisionComponentMetadata, CollisionComponentRegistry, EdgeManager,
 };
 
-use super::component::GameplayComponent;
+use super::component::{CollisionGeometryKind, GameplayComponent};
 use super::group::{ComponentGroup, ComponentId};
 use super::messages::{MessageCode, TableMessage};
 
@@ -75,9 +76,13 @@ pub struct TableActivityState {
 
 pub struct SimulationState {
     pub ball: Option<Ball>,
+    pub collision_component_offset: f32,
     pub plunger_charge: f32,
     pub launch_count: u64,
     pub drain_count: u64,
+    pub ball_in_drain: bool,
+    pub multiball_count: u32,
+    pub tilt_locked: bool,
     pub left_flipper_active: bool,
     pub right_flipper_active: bool,
     pub regions: TableRegionState,
@@ -85,6 +90,7 @@ pub struct SimulationState {
     pub activities: TableActivityState,
     pub edge_manager: EdgeManager,
     pub collision_components: CollisionComponentRegistry,
+    pub plunger_position: Vec2,
     info_box: TextBoxState,
     mission_box: TextBoxState,
     previous_ball_present: bool,
@@ -96,9 +102,13 @@ impl Default for SimulationState {
     fn default() -> Self {
         Self {
             ball: None,
+            collision_component_offset: 6.0,
             plunger_charge: 0.0,
             launch_count: 0,
             drain_count: 0,
+            ball_in_drain: false,
+            multiball_count: 0,
+            tilt_locked: false,
             left_flipper_active: false,
             right_flipper_active: false,
             regions: TableRegionState::default(),
@@ -106,6 +116,7 @@ impl Default for SimulationState {
             activities: TableActivityState::default(),
             edge_manager: EdgeManager::for_table_bounds(600.0, 416.0),
             collision_components: CollisionComponentRegistry::default(),
+            plunger_position: Vec2::new(560.0, 382.0),
             info_box: TextBoxState::default(),
             mission_box: TextBoxState::default(),
             previous_ball_present: false,
@@ -129,6 +140,14 @@ impl Default for PinballTable {
 }
 
 impl PinballTable {
+    fn edge_owner_token(component_id: ComponentId, slot: u8) -> u32 {
+        ((component_id.0 as u32) << 8) | u32::from(slot)
+    }
+
+    fn decode_edge_owner_token(token: u32) -> (ComponentId, u8) {
+        (ComponentId((token >> 8) as usize), (token & 0xFF) as u8)
+    }
+
     pub fn new() -> Self {
         Self::from_component_definitions(&default_component_definitions(), None)
     }
@@ -144,7 +163,9 @@ impl PinballTable {
         let mut table = Self::default();
         table.link_report = builder::install_components(&mut table, definitions, dat_file);
         if let Some(dat_file) = dat_file {
+            table.resolve_plunger_position(dat_file);
             table.register_collision_metadata(dat_file);
+            table.register_collision_edges(dat_file);
         }
         table.simulation.refresh_derived_state();
         table.refresh_text_boxes();
@@ -212,6 +233,10 @@ impl PinballTable {
 
     pub fn collision_component_count(&self) -> usize {
         self.simulation.collision_components.len()
+    }
+
+    pub fn collision_wall_count(&self) -> usize {
+        self.simulation.edge_manager.wall_count()
     }
 
     pub fn link_report(&self) -> &TableLinkReport {
@@ -302,7 +327,7 @@ impl PinballTable {
     }
 
     pub fn step_simulation(&mut self, dt: f32) {
-        if let Some(ball) = self.simulation.ball.as_mut() {
+        if let Some(mut ball) = self.simulation.ball.take() {
             if let Some(nudge) = self.input_state.pending_nudge.take() {
                 ball.apply_nudge(nudge);
             }
@@ -311,7 +336,19 @@ impl PinballTable {
                 self.simulation.left_flipper_active,
                 self.simulation.right_flipper_active,
             );
-            let _ = self.simulation.edge_manager.resolve_ball(ball);
+            let _ = self
+                .simulation
+                .edge_manager
+                .resolve_ball_with_filter(&mut ball, |owner_token| match owner_token {
+                    Some(owner_token) => {
+                        let (component_id, slot) = Self::decode_edge_owner_token(owner_token);
+                        self.component_slots
+                            .get(&component_id)
+                            .is_none_or(|component| component.collision_edge_active(slot))
+                    }
+                    None => true,
+                });
+            self.simulation.ball = Some(ball);
         }
 
         self.input_state.pending_start = false;
@@ -358,6 +395,121 @@ impl PinballTable {
                     hard_hit_sound_id: metadata.hard_hit_sound_id,
                     wall_float_count: metadata.wall_float_count,
                 });
+        }
+    }
+
+    fn register_collision_edges(&mut self, dat_file: &DatFile) {
+        for component in self.component_slots.values() {
+            let Some(group_index) = component.group_index() else {
+                continue;
+            };
+            if group_index < 0 {
+                continue;
+            }
+
+            match component.collision_geometry_kind() {
+                CollisionGeometryKind::WallAttributes => {
+                    for wall_code in [600_i16, 603_i16] {
+                        let Some(edges) =
+                            dat_file.visual_collision_edges(
+                                group_index as usize,
+                                0,
+                                wall_code,
+                                component.collision_edge_offset(
+                                    if wall_code == 600 { 0 } else { 1 },
+                                    self.simulation.collision_component_offset,
+                                ),
+                            )
+                        else {
+                            continue;
+                        };
+
+                        for edge in edges {
+                            match edge {
+                                VisualCollisionEdge::Line { start, end } => {
+                                    self.simulation.edge_manager.add_owned_wall(
+                                        crate::engine::physics::EdgeSegment::new(
+                                            Vec2::new(start.0, start.1),
+                                            Vec2::new(end.0, end.1),
+                                        ),
+                                        Some(Self::edge_owner_token(
+                                            component.id(),
+                                            if wall_code == 600 { 0 } else { 1 },
+                                        )),
+                                    );
+                                }
+                                VisualCollisionEdge::Circle { center, radius } => {
+                                    self.simulation.edge_manager.add_owned_circle(
+                                        crate::engine::physics::EdgeCircle::new(
+                                            Vec2::new(center.0, center.1),
+                                            radius,
+                                        ),
+                                        Some(Self::edge_owner_token(
+                                            component.id(),
+                                            if wall_code == 600 { 0 } else { 1 },
+                                        )),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                CollisionGeometryKind::OnewayVisual => {
+                    let Some(points) = dat_file.visual_primary_points(group_index as usize, 0) else {
+                        continue;
+                    };
+                    if points.len() != 2 {
+                        continue;
+                    }
+
+                    let point2 = Vec2::new(points[0].0, points[0].1);
+                    let point1 = Vec2::new(points[1].0, points[1].1);
+                    let solid = crate::engine::physics::EdgeSegment::new(point2, point1)
+                        .offset(self.simulation.collision_component_offset);
+                    let trigger = crate::engine::physics::EdgeSegment::new(point1, point2)
+                        .offset(-self.simulation.collision_component_offset * 0.8);
+                    self.simulation
+                        .edge_manager
+                        .add_owned_wall(solid, Some(Self::edge_owner_token(component.id(), 0)));
+                    self.simulation
+                        .edge_manager
+                        .add_owned_trigger(trigger, Some(Self::edge_owner_token(component.id(), 1)));
+                }
+                CollisionGeometryKind::VisualCircleAttribute306 => {
+                    let Some(VisualCollisionEdge::Circle { center, radius }) =
+                        dat_file.visual_circle_attribute_306(group_index as usize, 0)
+                    else {
+                        continue;
+                    };
+
+                    self.simulation.edge_manager.add_owned_circle(
+                        crate::engine::physics::EdgeCircle::new(
+                            Vec2::new(center.0, center.1),
+                            radius,
+                        ),
+                        Some(Self::edge_owner_token(component.id(), 0)),
+                    );
+                }
+            }
+        }
+    }
+
+    fn resolve_plunger_position(&mut self, dat_file: &DatFile) {
+        let Some(plunger) = self.find_component("plunger") else {
+            return;
+        };
+        let Some(group_index) = plunger.group_index() else {
+            return;
+        };
+        if group_index < 0 {
+            return;
+        }
+
+        let Some(values) = dat_file.float_attribute(group_index as usize, 0, 601) else {
+            return;
+        };
+        if values.len() >= 2 {
+            self.simulation.plunger_position = Vec2::new(values[0], values[1]);
         }
     }
 }

@@ -4,7 +4,7 @@ mod group_name;
 pub mod messages;
 pub mod table;
 
-pub use component::{ComponentState, GameplayComponent};
+pub use component::{CollisionGeometryKind, ComponentState, GameplayComponent};
 pub use group::{ComponentGroup, ComponentId};
 pub use group_name::*;
 pub use messages::{MessageCode, TableMessage};

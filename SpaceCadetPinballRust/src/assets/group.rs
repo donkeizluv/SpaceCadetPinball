@@ -57,6 +57,12 @@ pub struct VisualCollisionMetadata {
     pub wall_float_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VisualCollisionEdge {
+    Line { start: (f32, f32), end: (f32, f32) },
+    Circle { center: (f32, f32), radius: f32 },
+}
+
 impl MessageFont {
     pub fn glyph(&self, character: u8) -> Option<MessageFontGlyph> {
         self.glyphs.get(character as usize).copied().flatten()
@@ -540,6 +546,83 @@ impl DatFile {
         Some(metadata)
     }
 
+    pub fn visual_collision_edges(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+        first_value: i16,
+        offset: f32,
+    ) -> Option<Vec<VisualCollisionEdge>> {
+        let float_values = self.float_attribute(group_index, group_index_offset, first_value)?;
+        Self::decode_visual_collision_edges(&float_values, offset)
+    }
+
+    pub fn visual_primary_points(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<Vec<(f32, f32)>> {
+        let state_index = self.visual_state_group_index(group_index, group_index_offset)?;
+        let float_values = self
+            .group(state_index)?
+            .float_values(FieldType::FloatArray)?;
+        Self::decode_visual_primary_points(&float_values)
+    }
+
+    pub fn visual_circle_attribute_306(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<VisualCollisionEdge> {
+        let visual_values = self.float_attribute(group_index, group_index_offset, 600)?;
+        if visual_values.first().copied()?.floor() as i32 - 1 != 0 {
+            return None;
+        }
+        let center_x = *visual_values.get(1)?;
+        let center_y = *visual_values.get(2)?;
+        let radius_scale = self
+            .float_attribute(group_index, group_index_offset, 306)?
+            .first()
+            .copied()
+            .unwrap_or(0.0);
+        let base_radius = *visual_values.get(3)?;
+        let radius = radius_scale * base_radius;
+        Some(VisualCollisionEdge::Circle {
+            center: (center_x, center_y),
+            radius: if radius == 0.0 { 0.001 } else { radius },
+        })
+    }
+
+    pub fn float_attribute(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+        first_value: i16,
+    ) -> Option<Vec<f32>> {
+        let state_index = self.visual_state_group_index(group_index, group_index_offset)?;
+
+        self.group(state_index)?
+            .entries
+            .iter()
+            .filter(|entry| entry.entry_type == FieldType::FloatArray)
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::RawBytes(bytes) => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .filter_map(|bytes| {
+                let values: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+                if values.first().map(|value| value.floor() as i16) == Some(first_value) {
+                    Some(values.into_iter().skip(1).collect())
+                } else {
+                    None
+                }
+            })
+            .next()
+    }
+
     fn visual_state_group_index(
         &self,
         group_index: usize,
@@ -618,6 +701,99 @@ impl DatFile {
             index += 2;
         }
     }
+
+    fn decode_visual_collision_edges(
+        values: &[f32],
+        offset: f32,
+    ) -> Option<Vec<VisualCollisionEdge>> {
+        let wall_value = values.first().copied()?;
+        let wall_type = wall_value.floor() as i32 - 1;
+
+        match wall_type {
+            0 => {
+                if values.len() < 4 {
+                    return None;
+                }
+                Some(vec![VisualCollisionEdge::Circle {
+                    center: (values[1], values[2]),
+                    radius: values[3] + offset,
+                }])
+            }
+            1 => {
+                if values.len() < 5 {
+                    return None;
+                }
+                Some(vec![VisualCollisionEdge::Line {
+                    start: (values[1], values[2]),
+                    end: (values[3], values[4]),
+                }])
+            }
+            segment_count if segment_count > 1 => {
+                let point_count = segment_count as usize;
+                let expected_len = point_count.checked_mul(2)?.checked_add(1)?;
+                if values.len() < expected_len {
+                    return None;
+                }
+
+                let points: Vec<(f32, f32)> = values[1..expected_len]
+                    .chunks_exact(2)
+                    .map(|pair| (pair[0], pair[1]))
+                    .collect();
+
+                let mut edges = Vec::with_capacity(point_count + usize::from(offset != 0.0));
+                for index in 0..point_count {
+                    let start = points[index];
+                    let end = points[(index + 1) % point_count];
+                    edges.push(VisualCollisionEdge::Line { start, end });
+                }
+
+                if offset != 0.0 {
+                    for index in 0..point_count {
+                        let previous = points[(index + point_count - 1) % point_count];
+                        let current = points[index];
+                        let next = points[(index + 1) % point_count];
+                        let cross = (current.0 - previous.0) * (next.1 - current.1)
+                            - (current.1 - previous.1) * (next.0 - current.0);
+                        if (cross > 0.0 && offset > 0.0) || (cross < 0.0 && offset < 0.0) {
+                            edges.push(VisualCollisionEdge::Circle {
+                                center: current,
+                                radius: offset * 1.001,
+                            });
+                        }
+                    }
+                }
+
+                Some(edges)
+            }
+            _ => None,
+        }
+    }
+
+    fn decode_visual_primary_points(values: &[f32]) -> Option<Vec<(f32, f32)>> {
+        if values.first().copied() != Some(600.0) || values.len() < 2 {
+            return None;
+        }
+
+        let wall_type = values[1].floor() as i32 - 1;
+        let point_count = match wall_type {
+            0 => return None,
+            1 => 2,
+            count if count > 1 => count as usize,
+            _ => return None,
+        };
+
+        let expected_len = point_count.checked_mul(2)?.checked_add(2)?;
+        if values.len() < expected_len {
+            return None;
+        }
+
+        Some(
+            values[2..expected_len]
+                .chunks_exact(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect(),
+        )
+    }
 }
 
 impl Default for VisualCollisionMetadata {
@@ -632,6 +808,126 @@ impl Default for VisualCollisionMetadata {
             hard_hit_sound_id: 0,
             wall_float_count: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::assets::{DatFile, EntryData, EntryPayload, FieldType, GroupData};
+
+    use super::{VisualCollisionEdge, VisualCollisionMetadata};
+
+    fn group_with_float_attribute(group_name: &str, values: &[f32]) -> GroupData {
+        let mut group = GroupData::new(0);
+        group.group_name = Some(group_name.to_string());
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: (values.len() * 4) as i32,
+            payload: EntryPayload::RawBytes(values.iter().copied().flat_map(f32::to_le_bytes).collect()),
+        });
+        group
+    }
+
+    #[test]
+    fn visual_collision_edges_decode_line_arrays() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute("wall", &[600.0, 2.0, 10.0, 20.0, 30.0, 40.0])],
+        };
+
+        let edges = dat
+            .visual_collision_edges(0, 0, 600, 0.0)
+            .expect("line wall should decode");
+        assert_eq!(
+            edges,
+            vec![VisualCollisionEdge::Line {
+                start: (10.0, 20.0),
+                end: (30.0, 40.0)
+            }]
+        );
+    }
+
+    #[test]
+    fn visual_collision_edges_decode_polygon_loops() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute(
+                "wall",
+                &[603.0, 4.0, 0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+            )],
+        };
+
+        let edges = dat
+            .visual_collision_edges(0, 0, 603, 0.0)
+            .expect("polygon wall should decode");
+        assert_eq!(edges.len(), 3);
+        assert!(edges.iter().all(|edge| matches!(edge, VisualCollisionEdge::Line { .. })));
+    }
+
+    #[test]
+    fn visual_collision_metadata_keeps_default_collision_group() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute("wall", &[600.0, 2.0, 10.0, 20.0, 30.0, 40.0])],
+        };
+
+        let metadata = dat
+            .visual_collision_metadata(0, 0)
+            .unwrap_or(VisualCollisionMetadata::default());
+        assert_eq!(metadata.collision_group, 1);
+    }
+
+    #[test]
+    fn visual_primary_points_decode_visual_line_payload() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute("oneway", &[600.0, 2.0, 30.0, 40.0, 10.0, 20.0])],
+        };
+
+        let points = dat
+            .visual_primary_points(0, 0)
+            .expect("visual points should decode");
+        assert_eq!(points, vec![(30.0, 40.0), (10.0, 20.0)]);
+    }
+
+    #[test]
+    fn visual_circle_attribute_306_decodes_circle_payload() {
+        let mut group = group_with_float_attribute("kickout", &[600.0, 1.0, 30.0, 40.0, 5.0]);
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 8,
+            payload: EntryPayload::RawBytes([306.0_f32, 2.0].into_iter().flat_map(f32::to_le_bytes).collect()),
+        });
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group],
+        };
+
+        let circle = dat
+            .visual_circle_attribute_306(0, 0)
+            .expect("circle payload should decode");
+        assert_eq!(
+            circle,
+            VisualCollisionEdge::Circle {
+                center: (30.0, 40.0),
+                radius: 10.0
+            }
+        );
     }
 }
 

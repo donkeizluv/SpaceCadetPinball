@@ -89,7 +89,7 @@ is behavior parity:
 - [x] Source: named group traversal; Rust target: `src/assets/group.rs`; parity check: HUD, sequence, number-widget, bitmap, and debug-label helpers are used outside render internals.
 - [ ] Source: `loader.cpp` metadata extraction; Rust target: `src/assets/loader.rs`; parity check: enumerate component controls, scoring records, and group indexes needed by table construction.
 - [ ] Source: `partman.*` and `EmbeddedData.*`; Rust target: `src/assets/embedded.rs`; parity check: asset discovery works both from external files and embedded/fallback resources.
-- [ ] Source: `GroupData.*` edge/visual record layout; Rust target: `src/assets/group.rs`; parity check: typed accessors exist for collision edges, fields, scoring, and visual offsets without ad-hoc byte parsing.
+- [~] Source: `GroupData.*` edge/visual record layout; Rust target: `src/assets/group.rs`; parity check: typed collision-edge decoding exists for `600`/`603` wall arrays, for primary visual point payloads used by `TOneway`, and for `TKickout`-style visual circles driven by attribute `306`; field regions, scoring records, and visual offsets still need dedicated accessors.
 - [ ] Source: all DAT parser structs; Rust target: `src/assets/dat.rs`; parity check: unit tests cover header layout, record counts, bitmap/zMap dimensions, and selected known group names.
 
 ### 2. Rendering and Visual Composition
@@ -116,8 +116,8 @@ is behavior parity:
 ### 4. Physics and Collision
 
 - [x] Source: `TBall.*`; Rust target: `src/engine/physics/ball.rs`; parity check: ball can launch, move, and drain in the simplified loop.
-- [x] Source: `TEdgeSegment.*`, `TFlipperEdge.*`; Rust target: `src/engine/physics/edge.rs`, `flipper_edge.rs`; parity check: wall/flipper segment collision changes ball velocity.
-- [~] Source: `TEdgeManager.*`; Rust target: `src/engine/physics/edge_manager.rs`; parity check: current manager resolves table-boundary and flipper contacts only.
+- [~] Source: `TEdgeSegment.*`, `TFlipperEdge.*`; Rust target: `src/engine/physics/edge.rs`, `flipper_edge.rs`; parity check: flipper segments plus component-owned DAT line/circle walls now collide, including slot-filtered rollover-style `600`/`603` ownership and create-wall offset registration, but broad-phase and source-style trigger callbacks remain partial.
+- [~] Source: `TEdgeManager.*`; Rust target: `src/engine/physics/edge_manager.rs`; parity check: current manager resolves table-boundary, flipper, and slot-filtered DAT line/circle contacts without grid partitioning yet.
 - [ ] Source: `TEdgeManager::box_x`, `box_y`, `TestGridBox`; Rust target: physics broad-phase grid; parity check: collision candidates come from table boxes instead of scanning only hard-coded segments.
 - [ ] Source: `FindCollisionDistance` methods on edge/collision components; Rust target: ray/contact solver; parity check: ball motion uses time-of-impact style distance selection.
 - [ ] Source: `TBall::already_hit`, `not_again`, collision reset flags; Rust target: ball collision memory; parity check: repeated edge contacts do not jitter or double-trigger.
@@ -143,11 +143,11 @@ is behavior parity:
 - [x] Source: `TFlipper.*`; Rust target: `src/gameplay/mechanics/flipper.rs`; parity check: input messages toggle flipper visual and simplified collision state.
 - [x] Source: `TPlunger.*`; Rust target: `src/gameplay/mechanics/plunger.rs`; parity check: plunger input charges and launches the simplified ball.
 - [x] Source: `TDrain.*`; Rust target: `src/gameplay/mechanics/drain.rs`; parity check: drain removes ball and increments the simplified drain counter.
-- [ ] Source: `TFlipper::Message`, flipper control handlers; Rust target: `flipper.rs`; parity check: extend/retract/null messages match original timing and sounds.
-- [ ] Source: `TPlunger::Message`, `PlungerFeedBall`, `PlungerLaunchBall`; Rust target: `plunger.rs`; parity check: feed timer, relaunch, and launch strength match original behavior.
-- [ ] Source: `TDrain::Message`, `BallDrainControl`; Rust target: `drain.rs`; parity check: drain sequences update balls, bonus, player switching, and game over.
-- [ ] Source: `TBlocker.*`, `TGate.*`, `TOneway.*`, `TWall.*`; Rust target: mechanics collision components; parity check: enable/disable messages alter collision and visuals.
-- [ ] Source: `TKickback.*`, `TKickout.*`, `THole.*`, `TSink.*`; Rust target: capture/eject mechanics; parity check: ball capture, timers, sounds, and release vectors match C++.
+- [x] Source: `TBlocker::Message`, `TGate::Message`, `TKickout::Message`, `TSink::Message`, `TLight::Message`; Rust target: `src/gameplay/mechanics/{blocker,gate,kickout,sink,light}.rs`; parity check: `cargo test` passes with per-component enable/disable/timer/player-state unit coverage.
+- [x] Source: `TKickback::Message`, `TRollover::Message`, `TLightRollover::Message`, `TTripwire` reset/collision state; Rust target: `src/gameplay/mechanics/{kickback,rollover,light_rollover,tripwire}.rs`; parity check: `cargo test` passes with timer/rearm/toggle coverage for each mechanic.
+- [x] Source: `TFlipper::Message`, `TPlunger::Message`, `TDrain::Message`; Rust target: `src/gameplay/mechanics/{flipper,plunger,drain}.rs`; parity check: `cargo test` passes with extend/retract, feed/release, and drain-timer unit coverage on the current single-ball table state.
+- [~] Source: `TBlocker.*`, `TGate.*`, `TOneway.*`, `TWall.*`; Rust target: mechanics collision components; parity check: enable/disable messages alter collision and visuals, DAT wall arrays register component-owned line/circle edges with source-style create-wall offsets where available, `TOneway` visual-line geometry registers separate solid/trigger edges, and rollover-style secondary walls use independent slot activity instead of one shared active bit.
+- [~] Source: `TKickback.*`, `TKickout.*`, `THole.*`, `TSink.*`; Rust target: capture/eject mechanics; parity check: circle-backed geometry now registers for `TKickout`, but ball capture, timers, sounds, and release vectors still need full C++ behavior parity.
 - [ ] Source: `TBumper.*`, `TRamp.*`, `TFlagSpinner.*`; Rust target: impact/ramp/spinner mechanics; parity check: collisions trigger scoring, lights, sounds, and animation state.
 
 ### 7. Lights, Targets, Rules, Missions
@@ -207,6 +207,16 @@ is behavior parity:
 - 2026-04-27: `cargo test` passed after expanding table builder definitions with source-shaped placeholder records for `TBlocker`, `TGate`, `TKickback`, `TKickout`, and `TSink` control-tag families.
 - 2026-04-27: `cargo test` passed after expanding table builder definitions with source-shaped placeholder records for `TOneway`, `TRollover`, `TLightRollover`, and `TTripwire` sensor/control-tag families.
 - 2026-04-27: `cargo test` passed after adding DAT visual collision metadata extraction and registering component collision metadata from source-shaped table records.
+- 2026-04-27: `cargo test` passed after fixing ready-ball behavior so unlaunched balls no longer fall under gravity and DAT plunger feed position attribute `601` is used for ball spawn when available.
+- 2026-04-27: `cargo test` passed after splitting `PlaceholderMechanic` into source-shaped `TBlocker`, `TGate`, `TKickout`, `TSink`, and `TLight` message handlers, plus shared component sprite-state tracking for message-driven visuals.
+- 2026-04-27: `cargo test` passed after splitting the remaining rollover-family placeholders into source-shaped `TKickback`, `TRollover`, `TLightRollover`, and `TTripwire` timer/reset handlers; `TOneway` remains deferred to the collision-geometry pass because its source behavior is almost entirely collision-path logic.
+- 2026-04-27: `cargo test` passed after rewriting the simplified `TFlipper`, `TPlunger`, and `TDrain` mechanics around source-shaped message and timer state, plus minimal shared table fields for drain/tilt/multiball bookkeeping on the current single-ball runtime.
+- 2026-04-27: `cargo test` passed after adding typed DAT wall-array decoding for `600`/`603` attributes, registering decoded line edges into the current `EdgeManager`, and covering the new asset/geometry path with unit tests.
+- 2026-04-27: `cargo test` passed after making DAT-derived line walls component-owned and filtering them by component active state during collision resolution, which unblocks source-shaped geometry work for `TOneway`, blocker, and gate collision paths.
+- 2026-04-27: `cargo test` passed after adding a typed primary-visual-point accessor, replacing `TOneway`'s placeholder with a dedicated mechanic, and registering its source-shaped solid/trigger line pair through component-owned edge roles.
+- 2026-04-28: `cargo test` passed after extending collision-edge ownership from one component-level active bit to slot-aware filtering, allowing rollover and light-rollover `600`/`603` geometry to follow separate runtime flags during collision resolution.
+- 2026-04-28: `cargo test` passed after adding first-pass circle-edge collision support and per-component wall-offset hooks, so create-wall mechanics like blocker/gate/kickback/drain/plunger/sink no longer import `600` geometry as zero-offset lines only.
+- 2026-04-28: `cargo test` passed after adding a typed visual-circle accessor for the `visual.FloatArr + attr 306` pattern and registering `TKickout`-style circle geometry through a dedicated collision registration path.
 - 2026-04-27: Previous runs recorded `cargo check` and `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` success after gameplay-owned activity/visual-signal/refactor passes.
 - 2026-04-26: Previous runs recorded `cargo check` and `cargo run --manifest-path SpaceCadetPinballRust/Cargo.toml` success after DAT-backed text boxes, base-layer visual composition, light/sequence bank expansion, and table submodule split.
 

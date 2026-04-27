@@ -1,5 +1,5 @@
 use crate::engine::math::Vec2;
-use crate::engine::physics::{Ball, EdgeSegment};
+use crate::engine::physics::{Ball, EdgeCircle, EdgeSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionContact {
@@ -67,4 +67,45 @@ pub fn collide_ball_with_edge(
     ball.velocity.y -= (1.0 + restitution) * incoming_speed * normal.y;
 
     Some(CollisionContact::new(closest, normal, penetration))
+}
+
+pub fn collide_ball_with_circle(
+    ball: &mut Ball,
+    circle: EdgeCircle,
+    restitution: f32,
+) -> Option<CollisionContact> {
+    let separation = Vec2::new(
+        ball.position.x - circle.center.x,
+        ball.position.y - circle.center.y,
+    );
+    let distance_sq = separation.length_squared();
+    let collision_radius = ball.radius + circle.radius;
+    if distance_sq > collision_radius * collision_radius {
+        return None;
+    }
+
+    let normal = if distance_sq > 0.0001 {
+        let distance = distance_sq.sqrt();
+        Vec2::new(separation.x / distance, separation.y / distance)
+    } else {
+        Vec2::new(0.0, -1.0)
+    };
+
+    let incoming_speed = ball.velocity.x * normal.x + ball.velocity.y * normal.y;
+    if incoming_speed >= 0.0 {
+        return None;
+    }
+
+    let distance = distance_sq.sqrt();
+    let penetration = (collision_radius - distance).max(0.0);
+    ball.position.x += normal.x * penetration;
+    ball.position.y += normal.y * penetration;
+    ball.velocity.x -= (1.0 + restitution) * incoming_speed * normal.x;
+    ball.velocity.y -= (1.0 + restitution) * incoming_speed * normal.y;
+
+    let contact_point = Vec2::new(
+        circle.center.x + normal.x * circle.radius,
+        circle.center.y + normal.y * circle.radius,
+    );
+    Some(CollisionContact::new(contact_point, normal, penetration))
 }

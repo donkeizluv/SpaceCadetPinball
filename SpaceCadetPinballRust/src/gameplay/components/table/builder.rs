@@ -2,7 +2,9 @@ use crate::assets::DatFile;
 use crate::gameplay::components::group_name::{LEFT_FLIPPER_GROUP_NAME, PLUNGER_GROUP_NAME};
 use crate::gameplay::components::{ComponentId, ComponentState, GameplayComponent};
 use crate::gameplay::mechanics::{
-    DrainMechanic, FlipperMechanic, PlaceholderMechanic, PlungerMechanic,
+    BlockerMechanic, DrainMechanic, FlipperMechanic, GateMechanic, KickbackMechanic,
+    KickoutMechanic, LightRolloverMechanic, OnewayMechanic, PlungerMechanic,
+    RolloverMechanic, SinkMechanic, TripwireMechanic,
 };
 
 use super::PinballTable;
@@ -436,21 +438,22 @@ fn component_from_definition(
         ComponentKind::Flipper => Box::new(FlipperMechanic::from_state(state)),
         ComponentKind::Plunger => Box::new(PlungerMechanic::from_state(state)),
         ComponentKind::Drain => Box::new(DrainMechanic::from_state(state)),
-        ComponentKind::Blocker
-        | ComponentKind::Gate
-        | ComponentKind::Kickback
-        | ComponentKind::Kickout
-        | ComponentKind::Sink
-        | ComponentKind::Oneway
-        | ComponentKind::Rollover
-        | ComponentKind::LightRollover
-        | ComponentKind::Tripwire => Box::new(PlaceholderMechanic::from_state(state)),
+        ComponentKind::Blocker => Box::new(BlockerMechanic::from_state(state)),
+        ComponentKind::Gate => Box::new(GateMechanic::from_state(state)),
+        ComponentKind::Kickback => Box::new(KickbackMechanic::from_state(state)),
+        ComponentKind::Kickout => Box::new(KickoutMechanic::from_state(state)),
+        ComponentKind::Sink => Box::new(SinkMechanic::from_state(state)),
+        ComponentKind::Rollover => Box::new(RolloverMechanic::from_state(state)),
+        ComponentKind::LightRollover => Box::new(LightRolloverMechanic::from_state(state)),
+        ComponentKind::Tripwire => Box::new(TripwireMechanic::from_state(state)),
+        ComponentKind::Oneway => Box::new(OnewayMechanic::from_state(state)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::assets::{DatFile, EntryData, EntryPayload, FieldType, GroupData};
+    use crate::gameplay::TableMessage;
 
     use super::*;
 
@@ -492,6 +495,91 @@ mod tests {
             field_size: 24,
             payload: EntryPayload::RawBytes(
                 [600.0_f32, 2.0, 10.0, 20.0, 30.0, 40.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group
+    }
+
+    fn oneway_group(group_id: usize, group_name: &str) -> GroupData {
+        let mut group = named_group(group_id, group_name);
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 24,
+            payload: EntryPayload::RawBytes(
+                [600.0_f32, 2.0, 30.0, 40.0, 10.0, 20.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group
+    }
+
+    fn kickout_group(group_id: usize, group_name: &str) -> GroupData {
+        let mut group = named_group(group_id, group_name);
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 20,
+            payload: EntryPayload::RawBytes(
+                [600.0_f32, 1.0, 30.0, 40.0, 5.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 8,
+            payload: EntryPayload::RawBytes(
+                [306.0_f32, 2.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group
+    }
+
+    fn plunger_group(group_id: usize, group_name: &str, x: f32, y: f32) -> GroupData {
+        let mut group = named_group(group_id, group_name);
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [601.0_f32, x, y]
                     .into_iter()
                     .flat_map(f32::to_le_bytes)
                     .collect(),
@@ -590,5 +678,49 @@ mod tests {
         let table = PinballTable::from_dat(&dat_file);
 
         assert_eq!(table.collision_component_count(), 2);
+        assert_eq!(table.collision_wall_count(), 5);
+    }
+
+    #[test]
+    fn table_from_dat_registers_oneway_visual_geometry() {
+        let dat_file = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![oneway_group(0, "s_onewy1")],
+        };
+
+        let table = PinballTable::from_dat(&dat_file);
+
+        assert_eq!(table.collision_wall_count(), 5);
+    }
+
+    #[test]
+    fn table_from_dat_registers_kickout_visual_circle_geometry() {
+        let dat_file = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![kickout_group(0, "a_kout1")],
+        };
+
+        let table = PinballTable::from_dat(&dat_file);
+
+        assert_eq!(table.collision_wall_count(), 4);
+    }
+
+    #[test]
+    fn table_from_dat_uses_plunger_feed_position_for_ready_ball() {
+        let dat_file = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![plunger_group(0, PLUNGER_GROUP_NAME, 525.0, 315.0)],
+        };
+        let mut table = PinballTable::from_dat(&dat_file);
+
+        table.dispatch(TableMessage::StartGame);
+
+        let ball = table.active_ball().expect("start game should feed a ball");
+        assert_eq!(ball.position.x, 525.0);
+        assert_eq!(ball.position.y, 315.0);
+        assert!(!ball.is_launched());
     }
 }

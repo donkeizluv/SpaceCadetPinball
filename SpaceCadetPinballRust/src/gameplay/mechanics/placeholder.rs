@@ -49,6 +49,7 @@ impl GameplayComponent for PlaceholderMechanic {
             TableMessage::Code(MessageCode::Reset, _) => {
                 self.state.active = true;
                 self.state.message_field = 0;
+                self.state.sprite_index = -1;
             }
             TableMessage::Code(MessageCode::TLightSetMessageField, value) => {
                 self.state.message_field = value as i32;
