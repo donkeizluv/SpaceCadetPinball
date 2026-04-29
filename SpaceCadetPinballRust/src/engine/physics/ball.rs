@@ -11,6 +11,8 @@ pub struct Ball {
     pub velocity: Vec2,
     pub radius: f32,
     launched: bool,
+    recent_collisions: Vec<u32>,
+    collision_memory_reset_flag: bool,
 }
 
 impl Ball {
@@ -24,6 +26,8 @@ impl Ball {
             velocity: Vec2::ZERO,
             radius: 6.0,
             launched: false,
+            recent_collisions: Vec::new(),
+            collision_memory_reset_flag: false,
         }
     }
 
@@ -70,6 +74,32 @@ impl Ball {
         self.velocity.x *= 0.992;
     }
 
+    pub fn begin_collision_pass(&mut self) {
+        if self.collision_memory_reset_flag {
+            self.collision_memory_reset_flag = false;
+        } else {
+            self.recent_collisions.clear();
+            self.collision_memory_reset_flag = true;
+        }
+    }
+
+    pub fn remember_collision(&mut self, collision_id: u32) {
+        const MAX_RECENT_COLLISIONS: usize = 16;
+
+        if self.recent_collisions.len() < MAX_RECENT_COLLISIONS {
+            self.recent_collisions.push(collision_id);
+        } else {
+            self.recent_collisions.copy_within(8.., 0);
+            self.recent_collisions[8] = collision_id;
+            self.recent_collisions.truncate(9);
+        }
+        self.collision_memory_reset_flag = true;
+    }
+
+    pub fn already_hit(&self, collision_id: u32) -> bool {
+        self.recent_collisions.contains(&collision_id)
+    }
+
     pub fn is_drained(&self, drain_y: f32) -> bool {
         self.position.y - self.radius > drain_y
     }
@@ -106,5 +136,19 @@ mod tests {
         assert_eq!(ball.position, Vec2::new(100.0, 200.0));
         assert_eq!(ball.velocity, Vec2::ZERO);
         assert!(!ball.is_launched());
+    }
+
+    #[test]
+    fn collision_memory_expires_after_two_passes_without_refresh() {
+        let mut ball = Ball::ready_at(Vec2::new(100.0, 200.0));
+
+        ball.remember_collision(42);
+        assert!(ball.already_hit(42));
+
+        ball.begin_collision_pass();
+        assert!(ball.already_hit(42));
+
+        ball.begin_collision_pass();
+        assert!(!ball.already_hit(42));
     }
 }

@@ -43,4 +43,10 @@ impl CollisionComponentRegistry {
     pub fn iter(&self) -> impl Iterator<Item = &CollisionComponentMetadata> {
         self.components.iter()
     }
+
+    pub fn get(&self, component_id: ComponentId) -> Option<&CollisionComponentMetadata> {
+        self.components
+            .iter()
+            .find(|component| component.component_id == component_id)
+    }
 }

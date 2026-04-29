@@ -2,9 +2,11 @@ use crate::gameplay::components::{
     CollisionGeometryKind, ComponentId, ComponentState, GameplayComponent, MessageCode,
     SimulationState, TableInputState, TableMessage,
 };
+use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
 
 pub struct OnewayMechanic {
     state: ComponentState,
+    trigger_count: u32,
 }
 
 impl OnewayMechanic {
@@ -14,7 +16,10 @@ impl OnewayMechanic {
 
     pub fn from_state(mut state: ComponentState) -> Self {
         state.active = true;
-        Self { state }
+        Self {
+            state,
+            trigger_count: 0,
+        }
     }
 }
 
@@ -37,15 +42,42 @@ impl GameplayComponent for OnewayMechanic {
         _simulation: &mut SimulationState,
         _table_state: &TableInputState,
     ) {
-        if let TableMessage::Code(MessageCode::Reset, _) = message {
-            self.state.active = true;
+        if let TableMessage::Code(code, _) = message {
+            match code {
+                MessageCode::Reset => {
+                    self.state.active = true;
+                    self.trigger_count = 0;
+                }
+                MessageCode::ControlCollision => {
+                    self.trigger_count = self.trigger_count.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn on_collision(
+        &mut self,
+        slot: u8,
+        edge_role: CollisionEdgeRole,
+        _contact: CollisionContact,
+        simulation: &mut SimulationState,
+        _table_state: &TableInputState,
+    ) {
+        if simulation.tilt_locked {
+            return;
+        }
+
+        if slot == 1 && edge_role == CollisionEdgeRole::Trigger {
+            self.trigger_count = self.trigger_count.saturating_add(1);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::gameplay::components::TableMessage;
+    use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
+    use crate::gameplay::components::{GameplayComponent, TableMessage};
 
     use super::*;
 
@@ -66,5 +98,30 @@ mod tests {
             &table_state,
         );
         assert!(oneway.state.active);
+
+        oneway.on_message(
+            TableMessage::from_code(MessageCode::ControlCollision),
+            &mut simulation,
+            &table_state,
+        );
+        assert_eq!(oneway.trigger_count, 1);
+
+        oneway.on_collision(
+            0,
+            CollisionEdgeRole::Solid,
+            CollisionContact::new(crate::engine::math::Vec2::ZERO, crate::engine::math::Vec2::ZERO, 0.0),
+            &mut simulation,
+            &table_state,
+        );
+        assert_eq!(oneway.trigger_count, 1);
+
+        oneway.on_collision(
+            1,
+            CollisionEdgeRole::Trigger,
+            CollisionContact::new(crate::engine::math::Vec2::ZERO, crate::engine::math::Vec2::ZERO, 0.0),
+            &mut simulation,
+            &table_state,
+        );
+        assert_eq!(oneway.trigger_count, 2);
     }
 }

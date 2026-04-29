@@ -9,7 +9,8 @@ use crate::assets::{DatFile, VisualCollisionEdge};
 use crate::engine::TableBridgeState;
 use crate::engine::math::Vec2;
 use crate::engine::physics::{
-    Ball, CollisionComponentMetadata, CollisionComponentRegistry, EdgeManager,
+    Ball, CollisionComponentMetadata, CollisionComponentRegistry, CollisionContact,
+    CollisionResponseParams, EdgeManager,
 };
 
 use super::component::{CollisionGeometryKind, GameplayComponent};
@@ -75,7 +76,8 @@ pub struct TableActivityState {
 }
 
 pub struct SimulationState {
-    pub ball: Option<Ball>,
+    pub balls: Vec<Ball>,
+    pub score: u64,
     pub collision_component_offset: f32,
     pub plunger_charge: f32,
     pub launch_count: u64,
@@ -101,7 +103,8 @@ pub struct SimulationState {
 impl Default for SimulationState {
     fn default() -> Self {
         Self {
-            ball: None,
+            balls: Vec::new(),
+            score: 0,
             collision_component_offset: 6.0,
             plunger_charge: 0.0,
             launch_count: 0,
@@ -164,6 +167,7 @@ impl PinballTable {
         table.link_report = builder::install_components(&mut table, definitions, dat_file);
         if let Some(dat_file) = dat_file {
             table.resolve_plunger_position(dat_file);
+            table.apply_component_float_attributes(dat_file);
             table.register_collision_metadata(dat_file);
             table.register_collision_edges(dat_file);
         }
@@ -244,7 +248,11 @@ impl PinballTable {
     }
 
     pub fn active_ball(&self) -> Option<&Ball> {
-        self.simulation.ball.as_ref()
+        self.simulation.active_ball()
+    }
+
+    pub fn ball_count_in_rect(&self, min: Vec2, max: Vec2) -> usize {
+        self.simulation.ball_count_in_rect(min, max)
     }
 
     pub fn launch_count(&self) -> u64 {
@@ -253,6 +261,10 @@ impl PinballTable {
 
     pub fn drain_count(&self) -> u64 {
         self.simulation.drain_count
+    }
+
+    pub fn score(&self) -> u64 {
+        self.simulation.score
     }
 
     pub fn input_state(&self) -> TableInputState {
@@ -327,28 +339,76 @@ impl PinballTable {
     }
 
     pub fn step_simulation(&mut self, dt: f32) {
-        if let Some(mut ball) = self.simulation.ball.take() {
-            if let Some(nudge) = self.input_state.pending_nudge.take() {
-                ball.apply_nudge(nudge);
+        self.simulation.edge_manager.set_flipper_state(
+            self.simulation.left_flipper_active,
+            self.simulation.right_flipper_active,
+        );
+
+        let pending_nudge = self.input_state.pending_nudge.take();
+        for ball_index in 0..self.simulation.balls.len() {
+            let collision_events = {
+                let component_slots = &self.component_slots;
+                let edge_manager = &self.simulation.edge_manager;
+                let ball = &mut self.simulation.balls[ball_index];
+                if let Some(nudge) = pending_nudge {
+                    ball.apply_nudge(nudge);
+                }
+                ball.step(dt);
+                edge_manager.prepare_collision_pass(ball);
+
+                let mut events = Vec::new();
+                if let Some(contact) = edge_manager.resolve_ball_with_context(
+                    ball,
+                    |owner_token| match owner_token {
+                        Some(owner_token) => {
+                            let (component_id, slot) = Self::decode_edge_owner_token(owner_token);
+                            component_slots
+                                .get(&component_id)
+                                .is_none_or(|component| component.collision_edge_active(slot))
+                        }
+                        None => true,
+                    },
+                    |owner_token| match owner_token {
+                        Some(owner_token) => {
+                            let (component_id, _) = Self::decode_edge_owner_token(owner_token);
+                            self.simulation
+                                .collision_components
+                                .get(component_id)
+                                .map(|metadata| CollisionResponseParams {
+                                    elasticity: metadata.elasticity,
+                                    smoothness: metadata.smoothness,
+                                    threshold: metadata.threshold,
+                                    boost: metadata.boost,
+                                })
+                                .unwrap_or_default()
+                        }
+                        None => CollisionResponseParams {
+                            elasticity: 0.82,
+                            ..CollisionResponseParams::default()
+                        },
+                    },
+                )
+                {
+                    events.push(contact);
+                }
+                events.extend(edge_manager.trigger_contacts_with_filter(
+                    ball,
+                    |owner_token| match owner_token {
+                        Some(owner_token) => {
+                            let (component_id, slot) = Self::decode_edge_owner_token(owner_token);
+                            component_slots
+                                .get(&component_id)
+                                .is_none_or(|component| component.collision_edge_active(slot))
+                        }
+                        None => true,
+                    },
+                ));
+                events
+            };
+
+            for contact in collision_events {
+                self.dispatch_collision_contact(contact);
             }
-            ball.step(dt);
-            self.simulation.edge_manager.set_flipper_state(
-                self.simulation.left_flipper_active,
-                self.simulation.right_flipper_active,
-            );
-            let _ = self
-                .simulation
-                .edge_manager
-                .resolve_ball_with_filter(&mut ball, |owner_token| match owner_token {
-                    Some(owner_token) => {
-                        let (component_id, slot) = Self::decode_edge_owner_token(owner_token);
-                        self.component_slots
-                            .get(&component_id)
-                            .is_none_or(|component| component.collision_edge_active(slot))
-                    }
-                    None => true,
-                });
-            self.simulation.ball = Some(ball);
         }
 
         self.input_state.pending_start = false;
@@ -365,6 +425,23 @@ impl PinballTable {
             if let Some(component) = self.component_slots.get_mut(&component_id) {
                 component.on_message(message, &mut self.simulation, &table_state);
             }
+        }
+    }
+
+    fn dispatch_collision_contact(&mut self, contact: CollisionContact) {
+        let Some(owner_token) = contact.owner_token else {
+            return;
+        };
+        let (component_id, slot) = Self::decode_edge_owner_token(owner_token);
+        let table_state = self.input_state;
+        if let Some(component) = self.component_slots.get_mut(&component_id) {
+            component.on_collision(
+                slot,
+                contact.edge_role,
+                contact,
+                &mut self.simulation,
+                &table_state,
+            );
         }
     }
 
@@ -512,9 +589,82 @@ impl PinballTable {
             self.simulation.plunger_position = Vec2::new(values[0], values[1]);
         }
     }
+
+    fn apply_component_float_attributes(&mut self, dat_file: &DatFile) {
+        for component in self.component_slots.values_mut() {
+            let Some(group_index) = component.group_index() else {
+                continue;
+            };
+            if group_index < 0 {
+                continue;
+            }
+
+            if let Some(values) = dat_file.float_attribute(group_index as usize, 0, 407) {
+                component.apply_float_attribute(407, &values);
+            }
+        }
+    }
 }
 
 impl SimulationState {
+    const MAX_BALLS: usize = 20;
+
+    pub fn active_ball(&self) -> Option<&Ball> {
+        self.balls.first()
+    }
+
+    pub fn active_ball_mut(&mut self) -> Option<&mut Ball> {
+        self.balls.first_mut()
+    }
+
+    pub fn has_active_ball(&self) -> bool {
+        !self.balls.is_empty()
+    }
+
+    pub fn has_unlaunched_ball(&self) -> bool {
+        self.balls.iter().any(|ball| !ball.is_launched())
+    }
+
+    pub fn add_ball(&mut self, position: Vec2) -> Option<&mut Ball> {
+        if self.balls.len() >= Self::MAX_BALLS {
+            return None;
+        }
+
+        self.balls.push(Ball::ready_at(position));
+        self.sync_ball_counters();
+        self.balls.last_mut()
+    }
+
+    pub fn ball_count_in_rect(&self, min: Vec2, max: Vec2) -> usize {
+        self.balls
+            .iter()
+            .filter(|ball| {
+                ball.position.x >= min.x
+                    && ball.position.x <= max.x
+                    && ball.position.y >= min.y
+                    && ball.position.y <= max.y
+            })
+            .count()
+    }
+
+    pub fn remove_drained_balls(&mut self, drain_y: f32) -> usize {
+        let before = self.balls.len();
+        self.balls.retain(|ball| !ball.is_drained(drain_y));
+        let removed = before.saturating_sub(self.balls.len());
+        if removed > 0 {
+            self.sync_ball_counters();
+        }
+        removed
+    }
+
+    fn sync_ball_counters(&mut self) {
+        self.multiball_count = self.balls.len() as u32;
+    }
+
+    pub fn add_score(&mut self, amount: u64) {
+        self.score = self.score.saturating_add(amount);
+    }
+
     fn update_activity_state(&mut self, dt: f32) {
         let decay = (1.0 - dt.max(0.0) * 1.6).clamp(0.0, 1.0);
         self.activities.ramp_activity *= decay;
@@ -524,7 +674,7 @@ impl SimulationState {
         self.activities.bumper_activity *= decay;
         self.activities.lane_activity *= decay;
 
-        if let Some(ball) = self.ball.as_ref() {
+        if let Some(ball) = self.active_ball() {
             let ball_x = (ball.position.x / 600.0).clamp(0.0, 1.0);
             let ball_y = (ball.position.y / 416.0).clamp(0.0, 1.0);
             let top = (1.0 - ball_y).clamp(0.0, 1.0);
@@ -585,15 +735,10 @@ impl SimulationState {
     fn refresh_derived_state(&mut self) {
         let launch_progress = (self.launch_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
         let drain_progress = (self.drain_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
-        let score_value = self
-            .launch_count
-            .saturating_mul(1000)
-            .saturating_add(self.drain_count.saturating_mul(500));
-        let score_progress = (score_value.min(8_000) as f32 / 8_000.0).clamp(0.0, 1.0);
+        let score_progress = (self.score.min(8_000) as f32 / 8_000.0).clamp(0.0, 1.0);
 
         self.regions = self
-            .ball
-            .as_ref()
+            .active_ball()
             .map(|ball| TableRegionState {
                 lane_ready: if ball.is_launched() {
                     self.plunger_charge
@@ -665,5 +810,28 @@ impl SimulationState {
                 + (self.regions.ball_x * 0.25))
                 .clamp(0.0, 1.0),
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SimulationState;
+    use crate::engine::math::Vec2;
+
+    #[test]
+    fn ball_count_in_rect_counts_multiple_active_balls() {
+        let mut simulation = SimulationState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 100.0));
+        let _ = simulation.add_ball(Vec2::new(120.0, 120.0));
+        let _ = simulation.add_ball(Vec2::new(300.0, 300.0));
+
+        assert_eq!(
+            simulation.ball_count_in_rect(Vec2::new(90.0, 90.0), Vec2::new(150.0, 150.0)),
+            2
+        );
+        assert_eq!(
+            simulation.ball_count_in_rect(Vec2::new(250.0, 250.0), Vec2::new(350.0, 350.0)),
+            1
+        );
     }
 }

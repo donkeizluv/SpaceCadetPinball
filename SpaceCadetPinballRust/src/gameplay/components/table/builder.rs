@@ -4,7 +4,8 @@ use crate::gameplay::components::{ComponentId, ComponentState, GameplayComponent
 use crate::gameplay::mechanics::{
     BlockerMechanic, DrainMechanic, FlipperMechanic, GateMechanic, KickbackMechanic,
     KickoutMechanic, LightRolloverMechanic, OnewayMechanic, PlungerMechanic,
-    RolloverMechanic, SinkMechanic, TripwireMechanic,
+    PopupTargetMechanic, RolloverMechanic, SinkMechanic, SoloTargetMechanic, TripwireMechanic,
+    WallMechanic,
 };
 
 use super::PinballTable;
@@ -19,6 +20,9 @@ pub enum ComponentKind {
     Kickback,
     Kickout,
     Sink,
+    PopupTarget,
+    SoloTarget,
+    Wall,
     Oneway,
     Rollover,
     LightRollover,
@@ -169,6 +173,9 @@ pub fn default_component_definitions() -> Vec<ComponentDefinition> {
     ]);
 
     definitions.extend(sensor_component_definitions());
+    definitions.extend(wall_component_definitions());
+    definitions.extend(solo_target_component_definitions());
+    definitions.extend(popup_target_component_definitions());
 
     definitions
 }
@@ -386,6 +393,121 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
     ]
 }
 
+fn wall_component_definitions() -> [ComponentDefinition; 4] {
+    [
+        ComponentDefinition::new(ComponentId(42), "v_rebo1", ComponentKind::Wall, "TWall")
+            .with_control("FlipperRebounderControl1")
+            .with_primary_group("v_rebo1"),
+        ComponentDefinition::new(ComponentId(43), "v_rebo2", ComponentKind::Wall, "TWall")
+            .with_control("FlipperRebounderControl2")
+            .with_primary_group("v_rebo2"),
+        ComponentDefinition::new(ComponentId(44), "v_rebo3", ComponentKind::Wall, "TWall")
+            .with_control("RebounderControl")
+            .with_primary_group("v_rebo3"),
+        ComponentDefinition::new(ComponentId(45), "v_rebo4", ComponentKind::Wall, "TWall")
+            .with_control("RebounderControl")
+            .with_primary_group("v_rebo4"),
+    ]
+}
+
+fn solo_target_component_definitions() -> [ComponentDefinition; 13] {
+    [
+        ComponentDefinition::new(ComponentId(46), "a_targ10", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("FuelSpotTargetControl")
+            .with_primary_group("a_targ10")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(47), "a_targ11", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("FuelSpotTargetControl")
+            .with_primary_group("a_targ11")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(48), "a_targ12", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("FuelSpotTargetControl")
+            .with_primary_group("a_targ12")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(49), "a_targ13", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("MissionSpotTargetControl")
+            .with_primary_group("a_targ13")
+            .with_scoring(&[1000]),
+        ComponentDefinition::new(ComponentId(50), "a_targ14", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("MissionSpotTargetControl")
+            .with_primary_group("a_targ14")
+            .with_scoring(&[1000]),
+        ComponentDefinition::new(ComponentId(51), "a_targ15", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("MissionSpotTargetControl")
+            .with_primary_group("a_targ15")
+            .with_scoring(&[1000]),
+        ComponentDefinition::new(ComponentId(52), "a_targ16", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("LeftHazardSpotTargetControl")
+            .with_primary_group("a_targ16")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(53), "a_targ17", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("LeftHazardSpotTargetControl")
+            .with_primary_group("a_targ17")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(54), "a_targ18", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("LeftHazardSpotTargetControl")
+            .with_primary_group("a_targ18")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(55), "a_targ19", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("RightHazardSpotTargetControl")
+            .with_primary_group("a_targ19")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(56), "a_targ20", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("RightHazardSpotTargetControl")
+            .with_primary_group("a_targ20")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(57), "a_targ21", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("RightHazardSpotTargetControl")
+            .with_primary_group("a_targ21")
+            .with_scoring(&[750]),
+        ComponentDefinition::new(ComponentId(58), "a_targ22", ComponentKind::SoloTarget, "TSoloTarget")
+            .with_control("WormHoleDestinationControl")
+            .with_primary_group("a_targ22")
+            .with_scoring(&[750]),
+    ]
+}
+
+fn popup_target_component_definitions() -> [ComponentDefinition; 9] {
+    [
+        ComponentDefinition::new(ComponentId(59), "a_targ1", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("BoosterTargetControl")
+            .with_primary_group("a_targ1")
+            .with_scoring(&[500, 5000]),
+        ComponentDefinition::new(ComponentId(60), "a_targ2", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("BoosterTargetControl")
+            .with_primary_group("a_targ2")
+            .with_scoring(&[500, 5000]),
+        ComponentDefinition::new(ComponentId(61), "a_targ3", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("BoosterTargetControl")
+            .with_primary_group("a_targ3")
+            .with_scoring(&[500, 5000]),
+        ComponentDefinition::new(ComponentId(62), "a_targ4", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MedalTargetControl")
+            .with_primary_group("a_targ4")
+            .with_scoring(&[1500, 10000, 50000]),
+        ComponentDefinition::new(ComponentId(63), "a_targ5", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MedalTargetControl")
+            .with_primary_group("a_targ5")
+            .with_scoring(&[1500, 10000, 50000]),
+        ComponentDefinition::new(ComponentId(64), "a_targ6", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MedalTargetControl")
+            .with_primary_group("a_targ6")
+            .with_scoring(&[1500, 10000, 50000]),
+        ComponentDefinition::new(ComponentId(65), "a_targ7", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MultiplierTargetControl")
+            .with_primary_group("a_targ7")
+            .with_scoring(&[500, 1500]),
+        ComponentDefinition::new(ComponentId(66), "a_targ8", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MultiplierTargetControl")
+            .with_primary_group("a_targ8")
+            .with_scoring(&[500, 1500]),
+        ComponentDefinition::new(ComponentId(67), "a_targ9", ComponentKind::PopupTarget, "TPopupTarget")
+            .with_control("MultiplierTargetControl")
+            .with_primary_group("a_targ9")
+            .with_scoring(&[500, 1500]),
+    ]
+}
+
 pub fn install_components(
     table: &mut PinballTable,
     definitions: &[ComponentDefinition],
@@ -443,6 +565,9 @@ fn component_from_definition(
         ComponentKind::Kickback => Box::new(KickbackMechanic::from_state(state)),
         ComponentKind::Kickout => Box::new(KickoutMechanic::from_state(state)),
         ComponentKind::Sink => Box::new(SinkMechanic::from_state(state)),
+        ComponentKind::PopupTarget => Box::new(PopupTargetMechanic::from_state(state)),
+        ComponentKind::SoloTarget => Box::new(SoloTargetMechanic::from_state(state)),
+        ComponentKind::Wall => Box::new(WallMechanic::from_state(state)),
         ComponentKind::Rollover => Box::new(RolloverMechanic::from_state(state)),
         ComponentKind::LightRollover => Box::new(LightRolloverMechanic::from_state(state)),
         ComponentKind::Tripwire => Box::new(TripwireMechanic::from_state(state)),
@@ -453,6 +578,7 @@ fn component_from_definition(
 #[cfg(test)]
 mod tests {
     use crate::assets::{DatFile, EntryData, EntryPayload, FieldType, GroupData};
+    use crate::gameplay::components::MessageCode;
     use crate::gameplay::TableMessage;
 
     use super::*;
@@ -588,11 +714,36 @@ mod tests {
         group
     }
 
+    fn popup_target_group(group_id: usize, group_name: &str, timer_time: f32) -> GroupData {
+        let mut group = named_group(group_id, group_name);
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 8,
+            payload: EntryPayload::RawBytes(
+                [407.0_f32, timer_time]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group
+    }
+
     #[test]
     fn default_definitions_match_current_playable_slice() {
         let definitions = default_component_definitions();
 
-        assert_eq!(definitions.len(), 41);
+        assert_eq!(definitions.len(), 67);
         assert_eq!(definitions[0].source_class, "TFlipper");
         assert_eq!(definitions[0].control_name, Some("FlipperControl"));
         assert_eq!(definitions[1].source_class, "TPlunger");
@@ -609,6 +760,12 @@ mod tests {
         );
         assert_eq!(definitions[26].source_class, "TLightRollover");
         assert_eq!(definitions[40].control_name, Some("SkillShotGate6Control"));
+        assert_eq!(definitions[41].source_class, "TWall");
+        assert_eq!(definitions[44].control_name, Some("RebounderControl"));
+        assert_eq!(definitions[45].source_class, "TSoloTarget");
+        assert_eq!(definitions[57].control_name, Some("WormHoleDestinationControl"));
+        assert_eq!(definitions[58].source_class, "TPopupTarget");
+        assert_eq!(definitions[66].control_name, Some("MultiplierTargetControl"));
     }
 
     #[test]
@@ -628,9 +785,9 @@ mod tests {
 
         let table = PinballTable::from_dat(&dat_file);
 
-        assert_eq!(table.component_count(), 41);
-        assert_eq!(table.link_report().component_count, 41);
-        assert_eq!(table.link_report().resolved_group_count, 40);
+        assert_eq!(table.component_count(), 67);
+        assert_eq!(table.link_report().component_count, 67);
+        assert_eq!(table.link_report().resolved_group_count, 66);
         assert!(table.link_report().missing_groups.is_empty());
         assert_eq!(
             table
@@ -661,6 +818,24 @@ mod tests {
                 .find_component("s_trip5")
                 .and_then(|component| component.state().control_name),
             Some("SkillShotGate6Control")
+        );
+        assert_eq!(
+            table
+                .find_component("v_rebo3")
+                .and_then(|component| component.state().control_name),
+            Some("RebounderControl")
+        );
+        assert_eq!(
+            table
+                .find_component("a_targ22")
+                .and_then(|component| component.state().control_name),
+            Some("WormHoleDestinationControl")
+        );
+        assert_eq!(
+            table
+                .find_component("a_targ4")
+                .and_then(|component| component.state().control_name),
+            Some("MedalTargetControl")
         );
     }
 
@@ -722,5 +897,25 @@ mod tests {
         assert_eq!(ball.position.x, 525.0);
         assert_eq!(ball.position.y, 315.0);
         assert!(!ball.is_launched());
+    }
+
+    #[test]
+    fn table_from_dat_applies_popup_target_timer_attribute() {
+        let dat_file = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![popup_target_group(0, "a_targ1", 0.35)],
+        };
+        let mut table = PinballTable::from_dat(&dat_file);
+
+        table.dispatch(TableMessage::from_code(MessageCode::TPopupTargetDisable));
+        table.dispatch(TableMessage::with_value(MessageCode::TPopupTargetEnable, 0.0));
+        table.tick_components(0.34);
+        let target = table.find_component("a_targ1").expect("popup target should exist");
+        assert!(!target.is_active());
+
+        table.tick_components(0.01);
+        let target = table.find_component("a_targ1").expect("popup target should exist");
+        assert!(target.is_active());
     }
 }

@@ -1,3 +1,5 @@
+use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
+
 use super::group::ComponentId;
 use super::messages::TableMessage;
 use super::table::{SimulationState, TableInputState};
@@ -49,6 +51,14 @@ impl ComponentState {
         self.scoring = scoring.into();
         self
     }
+
+    pub fn collision_score(&self) -> u64 {
+        self.scoring
+            .first()
+            .copied()
+            .unwrap_or(0)
+            .max(0) as u64
+    }
 }
 
 pub trait GameplayComponent {
@@ -84,6 +94,8 @@ pub trait GameplayComponent {
         0.0
     }
 
+    fn apply_float_attribute(&mut self, _attribute_id: i16, _values: &[f32]) {}
+
     fn on_message(
         &mut self,
         message: TableMessage,
@@ -97,5 +109,22 @@ pub trait GameplayComponent {
         _table_state: &TableInputState,
         _dt: f32,
     ) {
+    }
+
+    fn on_collision(
+        &mut self,
+        _slot: u8,
+        edge_role: CollisionEdgeRole,
+        contact: CollisionContact,
+        simulation: &mut SimulationState,
+        table_state: &TableInputState,
+    ) {
+        if edge_role == CollisionEdgeRole::Trigger || contact.threshold_exceeded {
+            self.on_message(
+                TableMessage::from_code(super::messages::MessageCode::ControlCollision),
+                simulation,
+                table_state,
+            );
+        }
     }
 }

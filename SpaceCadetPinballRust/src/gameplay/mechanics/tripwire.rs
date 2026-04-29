@@ -2,6 +2,7 @@ use crate::gameplay::components::{
     ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
     TableMessage,
 };
+use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
 
 pub struct TripwireMechanic {
     state: ComponentState,
@@ -48,6 +49,19 @@ impl GameplayComponent for TripwireMechanic {
                 self.trigger_count = self.trigger_count.saturating_add(1);
             }
             _ => {}
+        }
+    }
+
+    fn on_collision(
+        &mut self,
+        _slot: u8,
+        _edge_role: CollisionEdgeRole,
+        _contact: CollisionContact,
+        simulation: &mut SimulationState,
+        _table_state: &TableInputState,
+    ) {
+        if !simulation.tilt_locked {
+            self.trigger_count = self.trigger_count.saturating_add(1);
         }
     }
 }

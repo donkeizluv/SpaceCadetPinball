@@ -54,14 +54,9 @@ impl GameplayComponent for DrainMechanic {
     }
 
     fn tick(&mut self, simulation: &mut SimulationState, _table_state: &TableInputState, dt: f32) {
-        let should_drain = simulation
-            .ball
-            .as_ref()
-            .is_some_and(|ball| ball.is_drained(self.drain_y));
-        if should_drain {
-            simulation.ball = None;
-            simulation.multiball_count = simulation.multiball_count.saturating_sub(1);
-            simulation.drain_count = simulation.drain_count.saturating_add(1);
+        let drained_count = simulation.remove_drained_balls(self.drain_y);
+        if drained_count > 0 {
+            simulation.drain_count = simulation.drain_count.saturating_add(drained_count as u64);
             if simulation.multiball_count == 0 {
                 simulation.ball_in_drain = true;
                 self.timer_remaining = Some(self.timer_time);
@@ -80,7 +75,6 @@ impl GameplayComponent for DrainMechanic {
 #[cfg(test)]
 mod tests {
     use crate::engine::math::Vec2;
-    use crate::engine::physics::Ball;
     use crate::gameplay::components::TableMessage;
 
     use super::*;
@@ -90,11 +84,10 @@ mod tests {
         let mut drain = DrainMechanic::new(ComponentId(1), "drain");
         let mut simulation = SimulationState::default();
         let table_state = TableInputState::default();
-        simulation.ball = Some(Ball::ready_at(Vec2::new(100.0, 420.0)));
-        simulation.multiball_count = 1;
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
 
         drain.tick(&mut simulation, &table_state, 0.0);
-        assert!(simulation.ball.is_none());
+        assert!(!simulation.has_active_ball());
         assert!(simulation.ball_in_drain);
         assert_eq!(simulation.multiball_count, 0);
         assert_eq!(simulation.drain_count, 1);

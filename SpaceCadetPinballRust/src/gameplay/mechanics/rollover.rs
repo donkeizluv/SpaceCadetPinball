@@ -2,6 +2,7 @@ use crate::gameplay::components::{
     ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
     TableMessage,
 };
+use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
 
 pub struct RolloverMechanic {
     state: ComponentState,
@@ -76,10 +77,29 @@ impl GameplayComponent for RolloverMechanic {
             }
         }
     }
+
+    fn on_collision(
+        &mut self,
+        _slot: u8,
+        _edge_role: CollisionEdgeRole,
+        _contact: CollisionContact,
+        simulation: &mut SimulationState,
+        table_state: &TableInputState,
+    ) {
+        if simulation.tilt_locked {
+            return;
+        }
+        self.on_message(
+            TableMessage::from_code(MessageCode::ControlCollision),
+            simulation,
+            table_state,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
     use crate::gameplay::components::{GameplayComponent, TableMessage};
 
     use super::*;
@@ -125,5 +145,23 @@ mod tests {
             &table_state,
         );
         assert!(rollover.collision_edge_active(1));
+    }
+
+    #[test]
+    fn rollover_collision_hook_respects_tilt_lock() {
+        let mut rollover = RolloverMechanic::new(ComponentId(1), "a_roll1");
+        let mut simulation = SimulationState::default();
+        let table_state = TableInputState::default();
+        simulation.tilt_locked = true;
+
+        rollover.on_collision(
+            0,
+            CollisionEdgeRole::Solid,
+            CollisionContact::new(crate::engine::math::Vec2::ZERO, crate::engine::math::Vec2::ZERO, 0.0),
+            &mut simulation,
+            &table_state,
+        );
+        assert_eq!(rollover.state.sprite_index, 0);
+        assert!(!rollover.rollover_flag);
     }
 }

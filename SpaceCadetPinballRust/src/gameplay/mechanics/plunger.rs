@@ -50,13 +50,12 @@ impl PlungerMechanic {
     }
 
     fn feed_ball(&mut self, simulation: &mut SimulationState) {
-        if simulation.ball.is_some() {
+        if simulation.has_unlaunched_ball() {
             self.ball_feed_timer_remaining = Some(1.0);
             return;
         }
 
-        simulation.ball = Some(Ball::ready_at(simulation.plunger_position));
-        simulation.multiball_count = simulation.multiball_count.saturating_add(1);
+        let _ = simulation.add_ball(simulation.plunger_position);
         simulation.ball_in_drain = false;
     }
 
@@ -68,7 +67,10 @@ impl PlungerMechanic {
         self.state.sprite_index = 0;
 
         if simulation.plunger_charge > 0.0 {
-            if let Some(ball) = simulation.ball.as_mut()
+            if let Some(ball) = simulation
+                .balls
+                .iter_mut()
+                .find(|ball| !ball.is_launched())
                 && !ball.is_launched()
             {
                 ball.launch(simulation.plunger_charge);
@@ -205,7 +207,9 @@ impl GameplayComponent for PlungerMechanic {
             }
         }
 
-        if self.pending_relaunches > 0 && simulation.ball.as_ref().is_some_and(|ball| ball.is_launched()) {
+        if self.pending_relaunches > 0
+            && simulation.balls.iter().any(|ball| ball.is_launched())
+        {
             self.pending_relaunches -= 1;
         }
     }
@@ -222,7 +226,7 @@ mod tests {
         let mut plunger = PlungerMechanic::new(ComponentId(1), "plunger");
         let mut simulation = SimulationState::default();
         let table_state = TableInputState::default();
-        simulation.ball = Some(Ball::ready_at(simulation.plunger_position));
+        let _ = simulation.add_ball(simulation.plunger_position);
 
         plunger.on_message(
             TableMessage::from_code(MessageCode::PlungerLaunchBall),
@@ -230,7 +234,7 @@ mod tests {
             &table_state,
         );
         assert_eq!(simulation.launch_count, 1);
-        assert!(simulation.ball.as_ref().is_some_and(Ball::is_launched));
+        assert!(simulation.active_ball().is_some_and(Ball::is_launched));
 
         plunger.tick(&mut simulation, &table_state, 0.025);
         assert_eq!(simulation.plunger_charge, 0.0);
@@ -249,7 +253,7 @@ mod tests {
         );
         plunger.tick(&mut simulation, &table_state, 0.96);
 
-        assert!(simulation.ball.is_some());
+        assert!(simulation.has_active_ball());
         assert_eq!(simulation.multiball_count, 1);
         assert!(!simulation.ball_in_drain);
     }

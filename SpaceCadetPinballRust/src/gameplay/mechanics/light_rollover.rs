@@ -2,6 +2,7 @@ use crate::gameplay::components::{
     ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
     TableMessage,
 };
+use crate::engine::physics::{CollisionContact, CollisionEdgeRole};
 
 pub struct LightRolloverMechanic {
     state: ComponentState,
@@ -97,6 +98,24 @@ impl GameplayComponent for LightRolloverMechanic {
                 self.state.sprite_index = -1;
             }
         }
+    }
+
+    fn on_collision(
+        &mut self,
+        _slot: u8,
+        _edge_role: CollisionEdgeRole,
+        _contact: CollisionContact,
+        simulation: &mut SimulationState,
+        table_state: &TableInputState,
+    ) {
+        if simulation.tilt_locked {
+            return;
+        }
+        self.on_message(
+            TableMessage::from_code(MessageCode::ControlCollision),
+            simulation,
+            table_state,
+        );
     }
 }
 

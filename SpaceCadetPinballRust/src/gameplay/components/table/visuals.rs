@@ -168,7 +168,7 @@ fn static_table_sequence_progress(group_name: &'static str, signals: ProgressSig
 
 impl PinballTable {
     pub fn visual_state(&self) -> TableVisualState {
-        let ball_visual = self.simulation.ball.as_ref().map(|ball| {
+        let ball_visual = self.simulation.active_ball().map(|ball| {
             let bounds = ball.bounds();
             let size = bounds.width.max(bounds.height).max(1);
             BitmapVisualState {
@@ -180,12 +180,8 @@ impl PinballTable {
                 use_native_size: false,
             }
         });
-        let score_value = self
-            .simulation
-            .launch_count
-            .saturating_mul(1000)
-            .saturating_add(self.simulation.drain_count.saturating_mul(500));
-        let ball_count = u8::from(self.simulation.ball.is_some());
+        let score_value = self.simulation.score;
+        let ball_count = self.simulation.multiball_count.min(u32::from(u8::MAX)) as u8;
         let player_number = 1;
         let score_widget = NumberWidgetVisualState {
             widget_group_name: SCORE_GROUP_NAME,
@@ -208,8 +204,7 @@ impl PinballTable {
         let lane_ready_progress = self.simulation.regions.lane_ready;
         let kickback_progress = if self
             .simulation
-            .ball
-            .as_ref()
+            .active_ball()
             .is_some_and(|ball| !ball.is_launched())
         {
             self.simulation.plunger_charge.max(0.25)
@@ -405,7 +400,7 @@ impl PinballTable {
             0.17,
         );
 
-        if let Some(ball) = self.simulation.ball.as_ref() {
+        if let Some(ball) = self.simulation.active_ball() {
             visuals.push(TableVisual::Light(LightVisualState {
                 group_name: BALL_READY_LIGHT_GROUP_NAME,
                 frame_fraction: if ball.is_launched() { 0.0 } else { 1.0 },
@@ -461,7 +456,7 @@ impl PinballTable {
 
         visuals.push(TableVisual::Light(LightVisualState {
             group_name: BALL_IN_PLAY_LIGHT_GROUP_NAME,
-            frame_fraction: if self.simulation.ball.is_some() {
+            frame_fraction: if self.simulation.has_active_ball() {
                 1.0
             } else {
                 0.0
@@ -469,7 +464,8 @@ impl PinballTable {
         }));
         visuals.push(TableVisual::Light(LightVisualState {
             group_name: BALL_DRAINED_LIGHT_GROUP_NAME,
-            frame_fraction: if self.simulation.ball.is_none() && self.simulation.drain_count > 0 {
+            frame_fraction: if !self.simulation.has_active_ball() && self.simulation.drain_count > 0
+            {
                 1.0
             } else {
                 0.0

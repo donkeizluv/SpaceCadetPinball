@@ -123,7 +123,7 @@ impl TextBoxState {
 
 impl PinballTable {
     pub(super) fn refresh_text_boxes(&mut self) {
-        let ball_present = self.simulation.ball.is_some();
+        let ball_present = self.simulation.has_active_ball();
 
         if self.simulation.drain_count > self.simulation.previous_drain_count {
             self.simulation.info_box.display(
@@ -164,7 +164,7 @@ impl PinballTable {
     }
 
     fn info_status_text(&self) -> Option<String> {
-        if self.simulation.ball.is_none() {
+        if !self.simulation.has_active_ball() {
             if self.simulation.drain_count > 0 {
                 Some(format!(
                     "BALL LOST  PRESS START  DRAINS {}",
@@ -187,10 +187,7 @@ impl PinballTable {
         Some(format!(
             "LAUNCHES {}  SCORE {}",
             self.simulation.launch_count,
-            self.simulation
-                .launch_count
-                .saturating_mul(1000)
-                .saturating_add(self.simulation.drain_count.saturating_mul(500))
+            self.simulation.score
         ))
     }
 }

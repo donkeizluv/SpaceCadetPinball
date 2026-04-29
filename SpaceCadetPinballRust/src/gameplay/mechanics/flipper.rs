@@ -109,7 +109,7 @@ impl GameplayComponent for FlipperMechanic {
     }
 
     fn tick(&mut self, simulation: &mut SimulationState, _table_state: &TableInputState, _dt: f32) {
-        if let Some(ball) = simulation.ball.as_mut() {
+        if let Some(ball) = simulation.active_ball_mut() {
             ball.apply_flipper_impulse(self.left_active, self.right_active);
         }
     }
