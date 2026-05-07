@@ -138,7 +138,7 @@ mod tests {
         target.tick(&mut simulation, &table_state, 0.1);
         assert!(target.state.active);
         assert_eq!(target.state.sprite_index, 0);
-        assert_eq!(simulation.score, 0);
+        assert_eq!(simulation.score(), 0);
     }
 
     #[test]
@@ -190,6 +190,6 @@ mod tests {
             &table_state,
         );
 
-        assert_eq!(simulation.score, 750);
+        assert_eq!(simulation.score(), 750);
     }
 }

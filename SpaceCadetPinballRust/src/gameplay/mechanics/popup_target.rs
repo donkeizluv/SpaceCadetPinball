@@ -236,6 +236,6 @@ mod tests {
             &table_state,
         );
 
-        assert_eq!(simulation.score, 500);
+        assert_eq!(simulation.score(), 500);
     }
 }

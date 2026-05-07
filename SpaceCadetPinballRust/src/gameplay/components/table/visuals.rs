@@ -180,9 +180,9 @@ impl PinballTable {
                 use_native_size: false,
             }
         });
-        let score_value = self.simulation.score;
-        let ball_count = self.simulation.multiball_count.min(u32::from(u8::MAX)) as u8;
-        let player_number = 1;
+        let score_value = self.simulation.score();
+        let ball_count = self.simulation.current_ball_display();
+        let player_number = self.simulation.player_number();
         let score_widget = NumberWidgetVisualState {
             widget_group_name: SCORE_GROUP_NAME,
             font_group_name: FONT_GROUP_NAME,

@@ -164,7 +164,13 @@ impl PinballTable {
     }
 
     fn info_status_text(&self) -> Option<String> {
-        if !self.simulation.has_active_ball() {
+        if self.simulation.game_over {
+            if self.simulation.game_over_ready_for_restart() {
+                Some("PRESS START FOR NEW GAME".to_string())
+            } else {
+                Some("GAME OVER".to_string())
+            }
+        } else if !self.simulation.has_active_ball() {
             if self.simulation.drain_count > 0 {
                 Some(format!(
                     "BALL LOST  PRESS START  DRAINS {}",
@@ -184,10 +190,19 @@ impl PinballTable {
     }
 
     fn mission_status_text(&self) -> Option<String> {
-        Some(format!(
-            "LAUNCHES {}  SCORE {}",
-            self.simulation.launch_count,
-            self.simulation.score
-        ))
+        if self.simulation.game_over {
+            Some(format!(
+                "FINAL PLAYER {}  SCORE {}",
+                self.simulation.player_number(),
+                self.simulation.score()
+            ))
+        } else {
+            Some(format!(
+                "PLAYER {}  LAUNCHES {}  SCORE {}",
+                self.simulation.player_number(),
+                self.simulation.launch_count,
+                self.simulation.score()
+            ))
+        }
     }
 }

@@ -77,7 +77,16 @@ pub struct TableActivityState {
 
 pub struct SimulationState {
     pub balls: Vec<Ball>,
-    pub score: u64,
+    pub player_scores: [PlayerState; PlayerState::MAX_PLAYERS],
+    pub player_count: u8,
+    pub current_player: u8,
+    pub max_ball_count: u8,
+    pub score_multiplier: u8,
+    pub score_added: u64,
+    pub bonus_score: u64,
+    pub bonus_score_active: bool,
+    pub jackpot_score_active: bool,
+    pub game_over: bool,
     pub collision_component_offset: f32,
     pub plunger_charge: f32,
     pub launch_count: u64,
@@ -95,16 +104,52 @@ pub struct SimulationState {
     pub plunger_position: Vec2,
     info_box: TextBoxState,
     mission_box: TextBoxState,
+    pending_messages: Vec<TableMessage>,
+    game_over_timer_remaining: Option<f32>,
+    game_over_ready_for_restart: bool,
     previous_ball_present: bool,
     previous_launch_count: u64,
     previous_drain_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlayerState {
+    pub score: u64,
+    pub score_e9_part: u32,
+    pub ball_count: u8,
+    pub extra_balls: u8,
+    pub jackpot_score: u64,
+}
+
+impl PlayerState {
+    const MAX_PLAYERS: usize = 4;
+
+    const fn new(ball_count: u8) -> Self {
+        Self {
+            score: 0,
+            score_e9_part: 0,
+            ball_count,
+            extra_balls: 0,
+            jackpot_score: 0,
+        }
+    }
+}
+
 impl Default for SimulationState {
     fn default() -> Self {
+        let max_ball_count = 3;
         Self {
             balls: Vec::new(),
-            score: 0,
+            player_scores: [PlayerState::new(max_ball_count); PlayerState::MAX_PLAYERS],
+            player_count: 1,
+            current_player: 0,
+            max_ball_count,
+            score_multiplier: 0,
+            score_added: 0,
+            bonus_score: 10_000,
+            bonus_score_active: false,
+            jackpot_score_active: false,
+            game_over: false,
             collision_component_offset: 6.0,
             plunger_charge: 0.0,
             launch_count: 0,
@@ -122,6 +167,9 @@ impl Default for SimulationState {
             plunger_position: Vec2::new(560.0, 382.0),
             info_box: TextBoxState::default(),
             mission_box: TextBoxState::default(),
+            pending_messages: Vec::new(),
+            game_over_timer_remaining: None,
+            game_over_ready_for_restart: false,
             previous_ball_present: false,
             previous_launch_count: 0,
             previous_drain_count: 0,
@@ -264,7 +312,7 @@ impl PinballTable {
     }
 
     pub fn score(&self) -> u64 {
-        self.simulation.score
+        self.simulation.score()
     }
 
     pub fn input_state(&self) -> TableInputState {
@@ -305,8 +353,13 @@ impl PinballTable {
             },
         }
 
+        let deferred_player_changed = self.handle_table_message(message);
         self.message_log.push(message);
         self.broadcast_message(message);
+        if let Some(player_changed) = deferred_player_changed {
+            self.message_log.push(player_changed);
+            self.broadcast_message(player_changed);
+        }
         self.simulation.refresh_derived_state();
     }
 
@@ -335,6 +388,8 @@ impl PinballTable {
                 component.tick(&mut self.simulation, &table_state, dt);
             }
         }
+        self.process_pending_simulation_messages();
+        self.simulation.tick_table_timers(dt);
         self.simulation.refresh_derived_state();
     }
 
@@ -411,7 +466,9 @@ impl PinballTable {
             }
         }
 
+        self.process_pending_simulation_messages();
         self.input_state.pending_start = false;
+        self.simulation.tick_table_timers(dt);
         self.simulation.update_activity_state(dt);
         self.simulation.refresh_derived_state();
         self.simulation.info_box.tick(dt);
@@ -425,6 +482,44 @@ impl PinballTable {
             if let Some(component) = self.component_slots.get_mut(&component_id) {
                 component.on_message(message, &mut self.simulation, &table_state);
             }
+        }
+    }
+
+    fn process_pending_simulation_messages(&mut self) {
+        for message in self.simulation.drain_pending_messages() {
+            self.dispatch(message);
+        }
+    }
+
+    fn handle_table_message(&mut self, message: TableMessage) -> Option<TableMessage> {
+        match message {
+            TableMessage::Code(MessageCode::StartGamePlayer1, value)
+            | TableMessage::Code(MessageCode::NewGame, value) => {
+                let requested_players = value.floor().clamp(1.0, PlayerState::MAX_PLAYERS as f32) as u8;
+                self.simulation.start_new_game(requested_players);
+                None
+            }
+            TableMessage::Code(MessageCode::SwitchToNextPlayer, _) => self
+                .simulation
+                .switch_to_next_player()
+                .map(|next_player| {
+                    TableMessage::with_value(MessageCode::PlayerChanged, f32::from(next_player))
+                }),
+            TableMessage::Code(MessageCode::PlayerChanged, value) => {
+                let next_player =
+                    value.floor().clamp(0.0, (PlayerState::MAX_PLAYERS - 1) as f32) as u8;
+                self.simulation.set_current_player(next_player);
+                None
+            }
+            TableMessage::Code(MessageCode::Reset, _) => {
+                self.simulation.reset_player_state();
+                None
+            }
+            TableMessage::Code(MessageCode::GameOver, _) => {
+                self.simulation.enter_game_over();
+                None
+            }
+            _ => None,
         }
     }
 
@@ -609,6 +704,126 @@ impl PinballTable {
 impl SimulationState {
     const MAX_BALLS: usize = 20;
 
+    pub fn score(&self) -> u64 {
+        self.current_player_state().score
+    }
+
+    pub fn player_number(&self) -> u8 {
+        self.current_player.saturating_add(1)
+    }
+
+    pub fn player_count(&self) -> u8 {
+        self.player_count.max(1)
+    }
+
+    pub fn current_ball_display(&self) -> u8 {
+        let current_ball = self
+            .max_ball_count
+            .saturating_sub(self.current_player_state().ball_count)
+            .saturating_add(1);
+        current_ball.clamp(1, self.max_ball_count.max(1))
+    }
+
+    pub fn set_current_player(&mut self, player_index: u8) {
+        let upper_bound = self.player_count().saturating_sub(1);
+        self.current_player = player_index.min(upper_bound);
+    }
+
+    pub fn start_new_game(&mut self, requested_players: u8) {
+        self.player_count = requested_players.clamp(1, PlayerState::MAX_PLAYERS as u8);
+        self.current_player = 0;
+        self.score_multiplier = 0;
+        self.score_added = 0;
+        self.bonus_score = 10_000;
+        self.bonus_score_active = false;
+        self.jackpot_score_active = false;
+        self.game_over = false;
+        self.game_over_timer_remaining = None;
+        self.game_over_ready_for_restart = false;
+        for player in &mut self.player_scores {
+            *player = PlayerState::new(self.max_ball_count);
+        }
+        self.pending_messages.clear();
+    }
+
+    pub fn reset_player_state(&mut self) {
+        self.player_count = 1;
+        self.current_player = 0;
+        self.score_multiplier = 0;
+        self.score_added = 0;
+        self.bonus_score = 10_000;
+        self.bonus_score_active = false;
+        self.jackpot_score_active = false;
+        self.game_over = false;
+        self.game_over_timer_remaining = None;
+        self.game_over_ready_for_restart = false;
+        for player in &mut self.player_scores {
+            *player = PlayerState::new(self.max_ball_count);
+        }
+        self.pending_messages.clear();
+    }
+
+    pub fn enter_game_over(&mut self) {
+        self.game_over = true;
+        self.game_over_timer_remaining = Some(3.0);
+        self.game_over_ready_for_restart = false;
+        self.ball_in_drain = false;
+        self.plunger_charge = 0.0;
+    }
+
+    pub fn switch_to_next_player(&mut self) -> Option<u8> {
+        if self.player_count() <= 1 {
+            return None;
+        }
+
+        let current = usize::from(self.current_player);
+        let player_count = usize::from(self.player_count());
+        for offset in 1..=player_count {
+            let next = ((current + offset) % player_count) as u8;
+            if self.player_scores[usize::from(next)].ball_count > 0 {
+                self.current_player = next;
+                self.jackpot_score_active = false;
+                self.bonus_score_active = false;
+                return Some(next);
+            }
+        }
+
+        None
+    }
+
+    pub fn queue_message(&mut self, message: TableMessage) {
+        self.pending_messages.push(message);
+    }
+
+    pub fn drain_pending_messages(&mut self) -> Vec<TableMessage> {
+        std::mem::take(&mut self.pending_messages)
+    }
+
+    pub fn resolve_drain_timer(&mut self) -> DrainResolution {
+        let current_player = self.current_player;
+        let player_count = self.player_count();
+        let player = self.current_player_state_mut();
+        if player.extra_balls > 0 {
+            player.extra_balls -= 1;
+            return DrainResolution::ShootAgain;
+        }
+
+        player.ball_count = player.ball_count.saturating_sub(1);
+        if current_player + 1 != player_count || player.ball_count > 0 {
+            DrainResolution::AdvanceTurn
+        } else {
+            DrainResolution::GameOver
+        }
+    }
+
+    fn current_player_state(&self) -> &PlayerState {
+        &self.player_scores[usize::from(self.current_player)]
+    }
+
+    fn current_player_state_mut(&mut self) -> &mut PlayerState {
+        &mut self.player_scores[usize::from(self.current_player)]
+    }
+
     pub fn active_ball(&self) -> Option<&Ball> {
         self.balls.first()
     }
@@ -662,7 +877,51 @@ impl SimulationState {
     }
 
     pub fn add_score(&mut self, amount: u64) {
-        self.score = self.score.saturating_add(amount);
+        let awarded = self.score_added.saturating_add(
+            amount.saturating_mul(Self::score_multiplier_value(self.score_multiplier)),
+        );
+        if self.jackpot_score_active {
+            let jackpot_limit = 5_000_000_u64;
+            let jackpot = &mut self.current_player_state_mut().jackpot_score;
+            *jackpot = jackpot.saturating_add(amount).min(jackpot_limit);
+        }
+        if self.bonus_score_active {
+            self.bonus_score = self.bonus_score.saturating_add(amount).min(5_000_000);
+        }
+        let player = self.current_player_state_mut();
+        player.score = player.score.saturating_add(awarded);
+        if player.score >= 1_000_000_000 {
+            player.score_e9_part = player
+                .score_e9_part
+                .saturating_add((player.score / 1_000_000_000) as u32);
+            player.score %= 1_000_000_000;
+        }
+    }
+
+    pub fn special_add_score(&mut self, amount: u64) -> u64 {
+        let bonus_active = self.bonus_score_active;
+        let jackpot_active = self.jackpot_score_active;
+        let score_multiplier = self.score_multiplier;
+        let score_added = self.score_added;
+
+        self.bonus_score_active = false;
+        self.jackpot_score_active = false;
+        self.score_multiplier = 0;
+        self.score_added = 0;
+
+        let score_before = self.score();
+        let e9_before = self.current_player_state().score_e9_part;
+        self.add_score(amount);
+        let score_after = self.score();
+        let e9_after = self.current_player_state().score_e9_part;
+
+        self.bonus_score_active = bonus_active;
+        self.jackpot_score_active = jackpot_active;
+        self.score_multiplier = score_multiplier;
+        self.score_added = score_added;
+
+        u64::from(e9_after.saturating_sub(e9_before)) * 1_000_000_000
+            + score_after.saturating_sub(score_before)
     }
 
     fn update_activity_state(&mut self, dt: f32) {
@@ -735,7 +994,7 @@ impl SimulationState {
     fn refresh_derived_state(&mut self) {
         let launch_progress = (self.launch_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
         let drain_progress = (self.drain_count.min(6) as f32 / 6.0).clamp(0.0, 1.0);
-        let score_progress = (self.score.min(8_000) as f32 / 8_000.0).clamp(0.0, 1.0);
+        let score_progress = (self.score().min(8_000) as f32 / 8_000.0).clamp(0.0, 1.0);
 
         self.regions = self
             .active_ball()
@@ -811,12 +1070,49 @@ impl SimulationState {
                 .clamp(0.0, 1.0),
         };
     }
+
+    pub fn game_over_ready_for_restart(&self) -> bool {
+        self.game_over_ready_for_restart
+    }
+
+    pub fn jackpot_score(&self) -> u64 {
+        self.current_player_state().jackpot_score
+    }
+
+    const fn score_multiplier_value(index: u8) -> u64 {
+        match index {
+            0 => 1,
+            1 => 2,
+            2 => 3,
+            3 => 5,
+            _ => 10,
+        }
+    }
+
+    fn tick_table_timers(&mut self, dt: f32) {
+        if let Some(timer_remaining) = self.game_over_timer_remaining.as_mut() {
+            *timer_remaining -= dt.max(0.0);
+            if *timer_remaining <= 0.0 {
+                self.game_over_timer_remaining = None;
+                self.game_over_ready_for_restart = true;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainResolution {
+    ShootAgain,
+    AdvanceTurn,
+    GameOver,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SimulationState;
+    use super::{PinballTable, SimulationState};
     use crate::engine::math::Vec2;
+    use crate::gameplay::components::{ComponentId, MessageCode, TableMessage};
+    use crate::gameplay::mechanics::{DrainMechanic, PlungerMechanic};
 
     #[test]
     fn ball_count_in_rect_counts_multiple_active_balls() {
@@ -832,6 +1128,232 @@ mod tests {
         assert_eq!(
             simulation.ball_count_in_rect(Vec2::new(250.0, 250.0), Vec2::new(350.0, 350.0)),
             1
+        );
+    }
+
+    #[test]
+    fn add_score_tracks_current_player_only() {
+        let mut simulation = SimulationState::default();
+        simulation.start_new_game(2);
+        simulation.add_score(1_200);
+
+        assert_eq!(simulation.score(), 1_200);
+        assert_eq!(simulation.player_scores[0].score, 1_200);
+        assert_eq!(simulation.player_scores[1].score, 0);
+
+        simulation.set_current_player(1);
+        simulation.add_score(500);
+
+        assert_eq!(simulation.score(), 500);
+        assert_eq!(simulation.player_scores[0].score, 1_200);
+        assert_eq!(simulation.player_scores[1].score, 500);
+    }
+
+    #[test]
+    fn add_score_applies_source_shaped_multiplier_and_base_bonus() {
+        let mut simulation = SimulationState::default();
+        simulation.score_multiplier = 3;
+        simulation.score_added = 25;
+
+        simulation.add_score(100);
+
+        assert_eq!(simulation.score(), 525);
+    }
+
+    #[test]
+    fn add_score_updates_bonus_and_jackpot_accumulators_when_active() {
+        let mut simulation = SimulationState::default();
+        simulation.player_scores[0].jackpot_score = 20_000;
+        simulation.bonus_score_active = true;
+        simulation.jackpot_score_active = true;
+
+        simulation.add_score(3_500);
+
+        assert_eq!(simulation.score(), 3_500);
+        assert_eq!(simulation.bonus_score, 13_500);
+        assert_eq!(simulation.jackpot_score(), 23_500);
+    }
+
+    #[test]
+    fn add_score_caps_bonus_and_jackpot_accumulators_like_source() {
+        let mut simulation = SimulationState::default();
+        simulation.bonus_score = 4_999_000;
+        simulation.player_scores[0].jackpot_score = 4_999_000;
+        simulation.bonus_score_active = true;
+        simulation.jackpot_score_active = true;
+
+        simulation.add_score(10_000);
+
+        assert_eq!(simulation.bonus_score, 5_000_000);
+        assert_eq!(simulation.jackpot_score(), 5_000_000);
+    }
+
+    #[test]
+    fn special_add_score_temporarily_ignores_multiplier_and_accumulator_flags() {
+        let mut simulation = SimulationState::default();
+        simulation.score_multiplier = 4;
+        simulation.score_added = 50;
+        simulation.bonus_score_active = true;
+        simulation.jackpot_score_active = true;
+        simulation.bonus_score = 10_000;
+        simulation.player_scores[0].jackpot_score = 20_000;
+
+        let awarded = simulation.special_add_score(1_000);
+
+        assert_eq!(awarded, 1_000);
+        assert_eq!(simulation.score(), 1_000);
+        assert_eq!(simulation.bonus_score, 10_000);
+        assert_eq!(simulation.jackpot_score(), 20_000);
+        assert!(simulation.bonus_score_active);
+        assert!(simulation.jackpot_score_active);
+        assert_eq!(simulation.score_multiplier, 4);
+    }
+
+    #[test]
+    fn switch_to_next_player_restores_current_player_score() {
+        let mut table = PinballTable::default();
+        table.dispatch(TableMessage::with_value(MessageCode::NewGame, 2.0));
+        table.simulation.add_score(1_000);
+
+        table.dispatch(TableMessage::from_code(MessageCode::SwitchToNextPlayer));
+        assert_eq!(table.simulation.current_player, 1);
+        assert_eq!(table.score(), 0);
+        assert!(!table.simulation.bonus_score_active);
+        assert!(!table.simulation.jackpot_score_active);
+
+        table.simulation.add_score(250);
+        table.dispatch(TableMessage::from_code(MessageCode::SwitchToNextPlayer));
+
+        assert_eq!(table.simulation.current_player, 0);
+        assert_eq!(table.score(), 1_000);
+        assert_eq!(table.simulation.player_scores[1].score, 250);
+        assert!(
+            table
+                .message_log()
+                .iter()
+                .any(|message| *message == TableMessage::with_value(MessageCode::PlayerChanged, 1.0))
+        );
+    }
+
+    #[test]
+    fn switch_to_next_player_restores_per_player_jackpot_state() {
+        let mut table = PinballTable::default();
+        table.dispatch(TableMessage::with_value(MessageCode::NewGame, 2.0));
+        table.simulation.player_scores[0].jackpot_score = 75_000;
+        table.simulation.player_scores[1].jackpot_score = 125_000;
+        table.simulation.jackpot_score_active = true;
+        table.simulation.bonus_score_active = true;
+
+        table.dispatch(TableMessage::from_code(MessageCode::SwitchToNextPlayer));
+
+        assert_eq!(table.simulation.current_player, 1);
+        assert_eq!(table.simulation.jackpot_score(), 125_000);
+        assert!(!table.simulation.jackpot_score_active);
+        assert!(!table.simulation.bonus_score_active);
+
+        table.dispatch(TableMessage::from_code(MessageCode::SwitchToNextPlayer));
+        assert_eq!(table.simulation.current_player, 0);
+        assert_eq!(table.simulation.jackpot_score(), 75_000);
+    }
+
+    #[test]
+    fn drain_timer_expiry_decrements_ball_count_and_switches_player() {
+        let mut table = PinballTable::default();
+        table.add_component(DrainMechanic::new(ComponentId(1), "drain"));
+        table.add_component(PlungerMechanic::new(ComponentId(2), "plunger"));
+        table.simulation.start_new_game(2);
+        let _ = table.simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        table.tick_components(0.0);
+        assert!(table.simulation.ball_in_drain);
+        assert_eq!(table.simulation.player_scores[0].ball_count, 3);
+
+        table.tick_components(1.0);
+
+        assert_eq!(table.simulation.player_scores[0].ball_count, 2);
+        assert_eq!(table.simulation.current_player, 1);
+        assert!(
+            table
+                .message_log()
+                .iter()
+                .any(|message| *message == TableMessage::with_value(MessageCode::PlayerChanged, 1.0))
+        );
+        assert!(
+            table
+                .message_log()
+                .iter()
+                .any(|message| *message == TableMessage::from_code(MessageCode::PlungerStartFeedTimer))
+        );
+
+        table.tick_components(0.96);
+        assert!(table.simulation.has_unlaunched_ball());
+    }
+
+    #[test]
+    fn drain_timer_expiry_uses_extra_ball_before_switching_player() {
+        let mut table = PinballTable::default();
+        table.add_component(DrainMechanic::new(ComponentId(1), "drain"));
+        table.add_component(PlungerMechanic::new(ComponentId(2), "plunger"));
+        table.simulation.start_new_game(2);
+        table.simulation.player_scores[0].extra_balls = 1;
+        let _ = table.simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        table.tick_components(0.0);
+        table.tick_components(1.0);
+
+        assert_eq!(table.simulation.current_player, 0);
+        assert_eq!(table.simulation.player_scores[0].extra_balls, 0);
+        assert_eq!(table.simulation.player_scores[0].ball_count, 3);
+        assert!(
+            !table
+                .message_log()
+                .iter()
+                .any(|message| matches!(message, TableMessage::Code(MessageCode::PlayerChanged, _)))
+        );
+
+        table.tick_components(0.96);
+        assert!(table.simulation.has_unlaunched_ball());
+    }
+
+    #[test]
+    fn game_over_message_sets_endgame_state_until_restart_window() {
+        let mut table = PinballTable::default();
+
+        table.dispatch(TableMessage::from_code(MessageCode::GameOver));
+        table.refresh_text_boxes();
+        assert!(table.simulation.game_over);
+        assert!(!table.simulation.game_over_ready_for_restart());
+        assert_eq!(
+            table.simulation.info_box.current_text(),
+            Some("GAME OVER")
+        );
+
+        table.tick_components(3.0);
+        table.refresh_text_boxes();
+        assert!(table.simulation.game_over_ready_for_restart());
+        assert_eq!(
+            table.simulation.info_box.current_text(),
+            Some("PRESS START FOR NEW GAME")
+        );
+    }
+
+    #[test]
+    fn last_ball_drain_transitions_table_into_game_over_state() {
+        let mut table = PinballTable::default();
+        table.add_component(DrainMechanic::new(ComponentId(1), "drain"));
+        table.simulation.player_scores[0].ball_count = 1;
+        let _ = table.simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        table.tick_components(0.0);
+        table.tick_components(1.0);
+
+        assert!(table.simulation.game_over);
+        assert_eq!(table.simulation.player_scores[0].ball_count, 0);
+        assert!(
+            table
+                .message_log()
+                .iter()
+                .any(|message| *message == TableMessage::from_code(MessageCode::GameOver))
         );
     }
 }

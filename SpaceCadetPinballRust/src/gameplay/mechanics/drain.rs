@@ -1,6 +1,6 @@
 use crate::gameplay::components::{
-    ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
-    TableMessage,
+    ComponentId, ComponentState, DrainResolution, GameplayComponent, MessageCode,
+    SimulationState, TableInputState, TableMessage,
 };
 
 pub struct DrainMechanic {
@@ -58,6 +58,9 @@ impl GameplayComponent for DrainMechanic {
         if drained_count > 0 {
             simulation.drain_count = simulation.drain_count.saturating_add(drained_count as u64);
             if simulation.multiball_count == 0 {
+                if !simulation.ball_in_drain && !simulation.tilt_locked {
+                    let _ = simulation.special_add_score(simulation.bonus_score);
+                }
                 simulation.ball_in_drain = true;
                 self.timer_remaining = Some(self.timer_time);
             }
@@ -67,6 +70,24 @@ impl GameplayComponent for DrainMechanic {
             *timer -= dt.max(0.0);
             if *timer <= 0.0 {
                 self.timer_remaining = None;
+                match simulation.resolve_drain_timer() {
+                    DrainResolution::AdvanceTurn => {
+                        simulation.queue_message(TableMessage::from_code(
+                            MessageCode::SwitchToNextPlayer,
+                        ));
+                        simulation.queue_message(TableMessage::from_code(
+                            MessageCode::PlungerStartFeedTimer,
+                        ));
+                    }
+                    DrainResolution::ShootAgain => {
+                        simulation.queue_message(TableMessage::from_code(
+                            MessageCode::PlungerStartFeedTimer,
+                        ));
+                    }
+                    DrainResolution::GameOver => {
+                        simulation.queue_message(TableMessage::from_code(MessageCode::GameOver));
+                    }
+                }
             }
         }
     }
@@ -99,5 +120,96 @@ mod tests {
             &table_state,
         );
         assert_eq!(drain.timer_remaining, None);
+    }
+
+    #[test]
+    fn drain_timer_resolution_decrements_ball_count_then_requests_turn_advance() {
+        let mut drain = DrainMechanic::new(ComponentId(1), "drain");
+        let mut simulation = SimulationState::default();
+        simulation.start_new_game(2);
+        let table_state = TableInputState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        drain.tick(&mut simulation, &table_state, 0.0);
+        assert_eq!(simulation.player_scores[0].ball_count, 3);
+
+        drain.tick(&mut simulation, &table_state, 1.0);
+
+        assert_eq!(simulation.player_scores[0].ball_count, 2);
+        assert_eq!(
+            simulation.drain_pending_messages(),
+            vec![
+                TableMessage::from_code(MessageCode::SwitchToNextPlayer),
+                TableMessage::from_code(MessageCode::PlungerStartFeedTimer)
+            ]
+        );
+    }
+
+    #[test]
+    fn drain_timer_resolution_consumes_extra_ball_and_restarts_feed() {
+        let mut drain = DrainMechanic::new(ComponentId(1), "drain");
+        let mut simulation = SimulationState::default();
+        simulation.player_scores[0].extra_balls = 1;
+        let table_state = TableInputState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        drain.tick(&mut simulation, &table_state, 0.0);
+        drain.tick(&mut simulation, &table_state, 1.0);
+
+        assert_eq!(simulation.player_scores[0].extra_balls, 0);
+        assert_eq!(simulation.player_scores[0].ball_count, 3);
+        assert_eq!(
+            simulation.drain_pending_messages(),
+            vec![TableMessage::from_code(MessageCode::PlungerStartFeedTimer)]
+        );
+    }
+
+    #[test]
+    fn drain_timer_resolution_requests_game_over_for_last_ball() {
+        let mut drain = DrainMechanic::new(ComponentId(1), "drain");
+        let mut simulation = SimulationState::default();
+        simulation.player_scores[0].ball_count = 1;
+        let table_state = TableInputState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        drain.tick(&mut simulation, &table_state, 0.0);
+        drain.tick(&mut simulation, &table_state, 1.0);
+
+        assert_eq!(simulation.player_scores[0].ball_count, 0);
+        assert_eq!(
+            simulation.drain_pending_messages(),
+            vec![TableMessage::from_code(MessageCode::GameOver)]
+        );
+    }
+
+    #[test]
+    fn last_ball_drain_awards_bonus_via_special_add_score() {
+        let mut drain = DrainMechanic::new(ComponentId(1), "drain");
+        let mut simulation = SimulationState::default();
+        simulation.bonus_score = 25_000;
+        simulation.score_multiplier = 4;
+        simulation.score_added = 50;
+        let table_state = TableInputState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        drain.tick(&mut simulation, &table_state, 0.0);
+
+        assert_eq!(simulation.score(), 25_000);
+        assert!(simulation.ball_in_drain);
+    }
+
+    #[test]
+    fn tilt_locked_drain_does_not_award_bonus_score() {
+        let mut drain = DrainMechanic::new(ComponentId(1), "drain");
+        let mut simulation = SimulationState::default();
+        simulation.bonus_score = 25_000;
+        simulation.tilt_locked = true;
+        let table_state = TableInputState::default();
+        let _ = simulation.add_ball(Vec2::new(100.0, 420.0));
+
+        drain.tick(&mut simulation, &table_state, 0.0);
+
+        assert_eq!(simulation.score(), 0);
+        assert!(simulation.ball_in_drain);
     }
 }

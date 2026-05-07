@@ -133,10 +133,10 @@ is behavior parity:
 - [x] Source: `TPinballComponent` fields (`ActiveFlag`, `MessageField`, `GroupName`, `Control`, `GroupIndex`, scoring); Rust target: shared component state struct; parity check: new components do not duplicate base fields.
 - [~] Source: `control::make_links`, component tags; Rust target: component registry/linker; parity check: named DAT/component links resolve once during table construction.
 - [ ] Source: `TPinballTable::find_component`; Rust target: table lookup API; parity check: lookup by name and group index is available to rules/control code.
-- [~] Source: `TPinballTable::AddBall`, `BallList`, `BallCountInRect`; Rust target: table ball collection; parity check: table-owned ball list, add-ball/drain removal flow, and region ball counts now exist; player ball counts, inactive-ball reuse, and full multiball rule parity remain.
-- [~] Source: `TPinballTable::AddScore`, score structs, player state; Rust target: rules/scoring plus table state; parity check: the table now owns a real score field and HUD text/widgets consume component-driven scoring from ported wall/target families, but E9 part, jackpot, extra balls, and full player score switching still remain.
+- [~] Source: `TPinballTable::AddBall`, `BallList`, `BallCountInRect`; Rust target: table ball collection; parity check: table-owned ball list, add-ball/drain removal flow, region ball counts, and drain-timer-driven player ball-count plus feed-timer updates now exist; inactive-ball reuse and fuller multiball rule parity still remain.
+- [~] Source: `TPinballTable::AddScore`, score structs, player state; Rust target: rules/scoring plus table state; parity check: the table now keeps per-player score state, current-player HUD/widgets, source-shaped `AddScore` multiplier/base-award logic, bonus/jackpot accumulation, `SpecialAddScore` temporary flag suppression, live drain-bonus scoring, basic `SwitchToNextPlayer` score/jackpot restoration, and drain-timer-driven player ball-count plus shoot-again/feed-timer handoff on top of component-driven scoring from ported wall/target families, but richer rule flow still remains.
 - [ ] Source: `TPinballTable::tilt`, tilt timers, tilt lock; Rust target: table lifecycle/rules; parity check: repeated nudge can lock controls and recover on timeout.
-- [ ] Source: `TPinballTable` light show/endgame/replay callbacks; Rust target: gameplay timers/rules; parity check: game over, replay, and light show timers transition through original states.
+- [~] Source: `TPinballTable` light show/endgame/replay callbacks; Rust target: gameplay timers/rules; parity check: table-owned `GameOver` state and the endgame restart timeout now exist, but replay and light-show callback behavior still remain.
 
 ### 6. Mechanics Components
 
@@ -202,6 +202,13 @@ is behavior parity:
 ## Validation Log
 
 - 2026-04-29: `cargo test` passed after replacing the score HUD approximation with a real table score field and awarding source-linked points from the newly ported `TWall`, `TSoloTarget`, and `TPopupTarget` hard-hit paths.
+- 2026-04-29: `cargo test` passed after promoting the table score into per-player storage, wiring HUD/text to the current player, and adding basic `SwitchToNextPlayer` score restoration plus `PlayerChanged` broadcast flow.
+- 2026-05-07: `cargo test` passed after adding table-owned pending message flow so drain timer expiry now decrements the active player's ball count and requests source-shaped `SwitchToNextPlayer` handoff.
+- 2026-05-07: `cargo test` passed after extending drain expiry to mirror source serve flow by queueing `PlungerStartFeedTimer` for shoot-again and post-switch cases, plus `GameOver` for the last-ball path.
+- 2026-05-07: `cargo test` passed after making `GameOver` a real table-owned state with a source-shaped endgame timeout and restart prompt, and verifying last-ball drain transitions now enter that state.
+- 2026-05-07: `cargo test` passed after extending table score bookkeeping with source-shaped bonus/jackpot accumulation in `AddScore` and per-player jackpot restoration plus transient-flag clearing on player switch.
+- 2026-05-07: `cargo test` passed after adding source-shaped `AddScore` multiplier/base-award handling and a `SpecialAddScore` helper that temporarily suppresses multiplier and bonus/jackpot side effects like the C++ control path.
+- 2026-05-07: `cargo test` passed after routing the first live `SpecialAddScore` gameplay use through `TDrain`, so last-ball drains now award the table bonus score unless tilt-lock is active.
 - 2026-04-29: `cargo test` passed after adding a small DAT float-attribute hook so `TPopupTarget` re-enable timers now source their delay from attribute `407` during table construction.
 - 2026-04-29: `cargo test` passed after adding the `TPopupTarget` family (`a_targ1`-`a_targ9`) with hard-hit disable behavior, source control bindings, timer-based re-enable, and per-player message-field backup handling.
 - 2026-04-29: `cargo test` passed after adding the `TSoloTarget` family (`a_targ10`-`a_targ22`) with hard-hit disable/rearm behavior, source control bindings, and builder coverage.
