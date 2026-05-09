@@ -1090,6 +1090,7 @@ mod tests {
         assert!(!ball.is_launched());
     }
 
+
     #[test]
     fn table_from_dat_applies_popup_target_timer_attribute() {
         let dat_file = DatFile {

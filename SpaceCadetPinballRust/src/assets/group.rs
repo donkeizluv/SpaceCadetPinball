@@ -628,12 +628,13 @@ impl DatFile {
         group_index: usize,
         group_index_offset: usize,
     ) -> Option<usize> {
+        if group_index_offset == 0 {
+            return Some(group_index);
+        }
+
         let state_count = self.query_visual_states(group_index)?;
         if group_index_offset > state_count {
             return None;
-        }
-        if group_index_offset == 0 {
-            return Some(group_index);
         }
 
         let state_index = group_index.checked_add(group_index_offset)?;
@@ -647,16 +648,21 @@ impl DatFile {
     }
 
     fn query_visual_states(&self, group_index: usize) -> Option<usize> {
-        let short_values = self
-            .group(group_index)?
-            .short_values(FieldType::ShortValue)?;
-        if short_values.first().copied()? != 200 {
-            return None;
+        let group = self.group(group_index)?;
+        let short_values = group.short_values(FieldType::ShortArray);
+
+        if let Some(short_values) = short_values
+            && short_values.first().copied() == Some(100)
+        {
+            return short_values.get(1).copied().map(|value| value.max(1) as usize);
         }
-        short_values
-            .get(1)
-            .copied()
-            .map(|value| value.max(0) as usize)
+
+        let marker = group.short_values(FieldType::ShortValue)?;
+        if marker.first().copied()? == 200 {
+            Some(1)
+        } else {
+            None
+        }
     }
 
     fn apply_material_metadata(

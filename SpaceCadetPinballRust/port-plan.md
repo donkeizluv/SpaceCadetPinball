@@ -49,6 +49,10 @@ is behavior parity:
 
 ## Architecture Guardrails
 
+- MUST DO: Use the decompilation references in `../Doc` and `../SpaceCadetPinball`
+  when porting behavior or DAT semantics. Do not guess at coordinate spaces,
+  attribute meaning, control flow, timer behavior, or scoring rules when source
+  evidence is available.
 - Keep dependency flow one way: `platform` and `assets` feed `engine`; `engine`
   feeds `gameplay`; UI/debug sit on top.
 - Keep SDL, mixer, window policy, and toolkit glue in `platform`.
@@ -99,6 +103,7 @@ is behavior parity:
 - [x] Source: base table shell; Rust target: `src/gameplay/components/table/visuals.rs`; parity check: gameplay-owned visual snapshot includes `background` and `table`.
 - [x] Source: visible table object groups; Rust target: `src/gameplay/components/group_name.rs`, `visuals.rs`; parity check: broad sequence/light banks are in gameplay-owned visual composition.
 - [x] Source: `TTextBox.*`, `TTextBoxMessage.*`; Rust target: `src/gameplay/components/table/text_box.rs`; parity check: info and mission text boxes render with DAT-backed font and clipping.
+- [?] Source: `proj.*`, `TTableLayer.*`, `TBall::Repaint`, plunger/ball feed path; Rust target: `src/gameplay/components/table.rs`, `src/engine/render/*`, future coordinate-space helpers; parity check: one documented conversion path exists between DAT/world/projection space and table-local 2D space, and ready-ball placement, ball rendering, and component sprite anchoring all use it consistently.
 - [ ] Source: `TPinballComponent::SpriteSet`, `SpriteSetBall`; Rust target: visual snapshot API; parity check: component state can request sprites through a common component-facing API instead of hard-coded visual banks.
 - [ ] Source: `render.cpp` dirty rect/background restore; Rust target: `src/engine/render/scene.rs` or render state; parity check: moving sprites/text boxes redraw cleanly without relying only on full-frame redraw.
 - [ ] Source: zMap/depth behavior; Rust target: `src/engine/render/*`; parity check: ball and table-object layering matches representative C++ scenes.
@@ -172,12 +177,13 @@ is behavior parity:
 
 ## Near-Term Work Order
 
-1. Component-specific message parity: route flipper, plunger, drain, light, gate, blocker, kickout, and sink behavior through the new `MessageCode`/`ComponentState` spine.
-2. Convert registered collision metadata into simple line/circle edge records where DAT wall arrays are available.
-3. Physics broad phase: port the `TEdgeManager` grid enough to register table edges and collision components from DAT-derived geometry.
-4. Ball collection and lifecycle: replace single optional ball with table-owned ball list, drain/feed/add-ball flow, ball-in-rect queries, and player ball counts.
-5. Rule-backed visuals: migrate current visual approximation banks behind real light/target/component state, one family at a time.
-6. Audio and timers: add the original timer callback semantics and sound trigger path as soon as the first rule components need them.
+1. Coordinate-space cleanup: document and centralize DAT/world/projection/table-local conversions before more ball/ramp/kickout/sink behavior depends on ad hoc fixes.
+2. Component-specific message parity: route flipper, plunger, drain, light, gate, blocker, kickout, and sink behavior through the new `MessageCode`/`ComponentState` spine.
+3. Convert registered collision metadata into simple line/circle edge records where DAT wall arrays are available.
+4. Physics broad phase: port the `TEdgeManager` grid enough to register table edges and collision components from DAT-derived geometry.
+5. Ball collection and lifecycle: replace single optional ball with table-owned ball list, drain/feed/add-ball flow, ball-in-rect queries, and player ball counts.
+6. Rule-backed visuals: migrate current visual approximation banks behind real light/target/component state, one family at a time.
+7. Audio and timers: add the original timer callback semantics and sound trigger path as soon as the first rule components need them.
 
 ## Completed Groundwork
 
@@ -194,6 +200,9 @@ is behavior parity:
 ## Risks
 
 - The current visual coverage can hide missing rule behavior because many sprites are driven by approximate progress signals.
+- The current port still mixes DAT/world/projection coordinates with table-local
+  2D coordinates in a few places, which can produce "half-correct" fixes like
+  ball placement moving closer without actually matching source behavior.
 - The simplified physics path may become harder to replace if more rules assume one optional ball and hard-coded bounds.
 - The component dispatch model is still thinner than the original C++ `MessageCode` plus control-handler graph.
 - Audio, options persistence, high scores, and demo/attract are still placeholders or absent.
@@ -201,6 +210,7 @@ is behavior parity:
 
 ## Validation Log
 
+- 2026-05-10: Updated the plan after tracing the ready-ball placement bug back to a broader coordinate-space mismatch between DAT/world/projection data and the current Rust table-local 2D runtime; future port slices should use `Doc/` plus the decompiled C++ source as the primary reference instead of guessing.
 - 2026-05-10: `cargo test` passed after registering `lite104`-`lite109`, `lchute_tgt_lights`, and `bpr_solotgt_lights` as real light/light-group components, adding shared per-player left/right hazard trio progress to table state, and wiring `LeftHazardSpotTargetControl` plus `RightHazardSpotTargetControl` through those lights/groups and `v_gate1`/`v_gate2` disable messages.
 - 2026-05-10: `cargo test` passed after registering `lite101`-`lite103`, `top_circle_tgt_lights`, and `ramp_tgt_lights` as real light/light-group components, extending `TLightGroup` with the first group-wide flash-off handling, and wiring `MissionSpotTargetControl` plus the refined `FuelSpotTargetControl` flow through those linked light groups.
 - 2026-05-10: `cargo test` passed after porting the `FuelSpotTargetControl` rule into `TSoloTarget`, adding per-player fuel-target progress to table state, registering the `lite70`-`lite72` target lights as real `TLight` components, and covering the score/light/bargraph-refill path with unit tests.
