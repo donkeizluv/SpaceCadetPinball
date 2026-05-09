@@ -81,12 +81,15 @@ pub struct SimulationState {
     pub player_count: u8,
     pub current_player: u8,
     pub max_ball_count: u8,
+    pub full_tilt_mode: bool,
     pub score_multiplier: u8,
     pub score_added: u64,
     pub bonus_score: u64,
     pub bonus_score_active: bool,
+    pub bonus_hold_active: bool,
     pub jackpot_score_active: bool,
     pub game_over: bool,
+    pub fuel_bargraph_index: i32,
     pub collision_component_offset: f32,
     pub plunger_charge: f32,
     pub launch_count: u64,
@@ -105,6 +108,7 @@ pub struct SimulationState {
     info_box: TextBoxState,
     mission_box: TextBoxState,
     pending_messages: Vec<TableMessage>,
+    pending_component_messages: Vec<(String, TableMessage)>,
     game_over_timer_remaining: Option<f32>,
     game_over_ready_for_restart: bool,
     previous_ball_present: bool,
@@ -119,6 +123,14 @@ pub struct PlayerState {
     pub ball_count: u8,
     pub extra_balls: u8,
     pub jackpot_score: u64,
+    pub multiplier_target_mask: u8,
+    pub medal_target_mask: u8,
+    pub medal_level: u8,
+    pub booster_target_mask: u8,
+    pub booster_level: u8,
+    pub fuel_spot_target_mask: u8,
+    pub left_hazard_target_mask: u8,
+    pub right_hazard_target_mask: u8,
 }
 
 impl PlayerState {
@@ -131,6 +143,14 @@ impl PlayerState {
             ball_count,
             extra_balls: 0,
             jackpot_score: 0,
+            multiplier_target_mask: 0,
+            medal_target_mask: 0,
+            medal_level: 0,
+            booster_target_mask: 0,
+            booster_level: 0,
+            fuel_spot_target_mask: 0,
+            left_hazard_target_mask: 0,
+            right_hazard_target_mask: 0,
         }
     }
 }
@@ -144,12 +164,15 @@ impl Default for SimulationState {
             player_count: 1,
             current_player: 0,
             max_ball_count,
+            full_tilt_mode: false,
             score_multiplier: 0,
             score_added: 0,
             bonus_score: 10_000,
             bonus_score_active: false,
+            bonus_hold_active: false,
             jackpot_score_active: false,
             game_over: false,
+            fuel_bargraph_index: 0,
             collision_component_offset: 6.0,
             plunger_charge: 0.0,
             launch_count: 0,
@@ -168,6 +191,7 @@ impl Default for SimulationState {
             info_box: TextBoxState::default(),
             mission_box: TextBoxState::default(),
             pending_messages: Vec::new(),
+            pending_component_messages: Vec::new(),
             game_over_timer_remaining: None,
             game_over_ready_for_restart: false,
             previous_ball_present: false,
@@ -204,7 +228,13 @@ impl PinballTable {
     }
 
     pub fn from_dat(dat_file: &DatFile) -> Self {
-        Self::from_component_definitions(&default_component_definitions(), Some(dat_file))
+        Self::from_dat_with_mode(dat_file, false)
+    }
+
+    pub fn from_dat_with_mode(dat_file: &DatFile, full_tilt_mode: bool) -> Self {
+        let mut table = Self::from_component_definitions(&default_component_definitions(), Some(dat_file));
+        table.simulation.full_tilt_mode = full_tilt_mode;
+        table
     }
 
     pub fn from_component_definitions(
@@ -486,8 +516,30 @@ impl PinballTable {
     }
 
     fn process_pending_simulation_messages(&mut self) {
-        for message in self.simulation.drain_pending_messages() {
-            self.dispatch(message);
+        loop {
+            let pending_messages = self.simulation.drain_pending_messages();
+            let pending_component_messages = self.simulation.drain_pending_component_messages();
+            if pending_messages.is_empty() && pending_component_messages.is_empty() {
+                break;
+            }
+
+            for message in pending_messages {
+                self.dispatch(message);
+            }
+
+            for (component_name, message) in pending_component_messages {
+                self.dispatch_component_message(&component_name, message);
+            }
+        }
+    }
+
+    fn dispatch_component_message(&mut self, component_name: &str, message: TableMessage) {
+        let Some(component_id) = self.components.find(component_name) else {
+            return;
+        };
+        let table_state = self.input_state;
+        if let Some(component) = self.component_slots.get_mut(&component_id) {
+            component.on_message(message, &mut self.simulation, &table_state);
         }
     }
 
@@ -694,8 +746,10 @@ impl PinballTable {
                 continue;
             }
 
-            if let Some(values) = dat_file.float_attribute(group_index as usize, 0, 407) {
-                component.apply_float_attribute(407, &values);
+            for attribute_id in [407_i16, 904_i16] {
+                if let Some(values) = dat_file.float_attribute(group_index as usize, 0, attribute_id) {
+                    component.apply_float_attribute(attribute_id, &values);
+                }
             }
         }
     }
@@ -736,14 +790,17 @@ impl SimulationState {
         self.score_added = 0;
         self.bonus_score = 10_000;
         self.bonus_score_active = false;
+        self.bonus_hold_active = false;
         self.jackpot_score_active = false;
         self.game_over = false;
+        self.fuel_bargraph_index = 0;
         self.game_over_timer_remaining = None;
         self.game_over_ready_for_restart = false;
         for player in &mut self.player_scores {
             *player = PlayerState::new(self.max_ball_count);
         }
         self.pending_messages.clear();
+        self.pending_component_messages.clear();
     }
 
     pub fn reset_player_state(&mut self) {
@@ -753,14 +810,17 @@ impl SimulationState {
         self.score_added = 0;
         self.bonus_score = 10_000;
         self.bonus_score_active = false;
+        self.bonus_hold_active = false;
         self.jackpot_score_active = false;
         self.game_over = false;
+        self.fuel_bargraph_index = 0;
         self.game_over_timer_remaining = None;
         self.game_over_ready_for_restart = false;
         for player in &mut self.player_scores {
             *player = PlayerState::new(self.max_ball_count);
         }
         self.pending_messages.clear();
+        self.pending_component_messages.clear();
     }
 
     pub fn enter_game_over(&mut self) {
@@ -784,6 +844,7 @@ impl SimulationState {
                 self.current_player = next;
                 self.jackpot_score_active = false;
                 self.bonus_score_active = false;
+                self.bonus_hold_active = false;
                 return Some(next);
             }
         }
@@ -795,8 +856,21 @@ impl SimulationState {
         self.pending_messages.push(message);
     }
 
+    pub fn queue_component_message(
+        &mut self,
+        component_name: impl Into<String>,
+        message: TableMessage,
+    ) {
+        self.pending_component_messages
+            .push((component_name.into(), message));
+    }
+
     pub fn drain_pending_messages(&mut self) -> Vec<TableMessage> {
         std::mem::take(&mut self.pending_messages)
+    }
+
+    pub fn drain_pending_component_messages(&mut self) -> Vec<(String, TableMessage)> {
+        std::mem::take(&mut self.pending_component_messages)
     }
 
     pub fn resolve_drain_timer(&mut self) -> DrainResolution {
@@ -822,6 +896,135 @@ impl SimulationState {
 
     fn current_player_state_mut(&mut self) -> &mut PlayerState {
         &mut self.player_scores[usize::from(self.current_player)]
+    }
+
+    pub fn current_player_multiplier_target_mask(&self) -> u8 {
+        self.current_player_state().multiplier_target_mask
+    }
+
+    pub fn mark_current_player_multiplier_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.multiplier_target_mask |= mask;
+        player.multiplier_target_mask
+    }
+
+    pub fn clear_current_player_multiplier_targets(&mut self) {
+        self.current_player_state_mut().multiplier_target_mask = 0;
+    }
+
+    pub fn current_player_medal_target_mask(&self) -> u8 {
+        self.current_player_state().medal_target_mask
+    }
+
+    pub fn mark_current_player_medal_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.medal_target_mask |= mask;
+        player.medal_target_mask
+    }
+
+    pub fn clear_current_player_medal_targets(&mut self) {
+        self.current_player_state_mut().medal_target_mask = 0;
+    }
+
+    pub fn current_player_medal_level(&self) -> u8 {
+        self.current_player_state().medal_level
+    }
+
+    pub fn advance_current_player_medal_level(&mut self) -> u8 {
+        let player = self.current_player_state_mut();
+        player.medal_level = player.medal_level.saturating_add(1).min(2);
+        player.medal_level
+    }
+
+    pub fn current_player_booster_target_mask(&self) -> u8 {
+        self.current_player_state().booster_target_mask
+    }
+
+    pub fn mark_current_player_booster_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.booster_target_mask |= mask;
+        player.booster_target_mask
+    }
+
+    pub fn clear_current_player_booster_targets(&mut self) {
+        self.current_player_state_mut().booster_target_mask = 0;
+    }
+
+    pub fn current_player_booster_level(&self) -> u8 {
+        self.current_player_state().booster_level
+    }
+
+    pub fn advance_current_player_booster_level(&mut self) -> u8 {
+        let player = self.current_player_state_mut();
+        player.booster_level = player.booster_level.saturating_add(1).min(4);
+        player.booster_level
+    }
+
+    pub fn activate_bonus_score(&mut self) {
+        self.bonus_score_active = true;
+    }
+
+    pub fn activate_bonus_hold(&mut self) {
+        self.bonus_hold_active = true;
+    }
+
+    pub fn activate_jackpot_score(&mut self) {
+        self.jackpot_score_active = true;
+    }
+
+    pub fn add_extra_ball(&mut self) {
+        let player = self.current_player_state_mut();
+        player.extra_balls = player.extra_balls.saturating_add(1);
+    }
+
+    pub fn current_player_fuel_spot_target_mask(&self) -> u8 {
+        self.current_player_state().fuel_spot_target_mask
+    }
+
+    pub fn mark_current_player_fuel_spot_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.fuel_spot_target_mask |= mask;
+        player.fuel_spot_target_mask
+    }
+
+    pub fn clear_current_player_fuel_spot_targets(&mut self) {
+        self.current_player_state_mut().fuel_spot_target_mask = 0;
+    }
+
+    pub fn current_player_left_hazard_target_mask(&self) -> u8 {
+        self.current_player_state().left_hazard_target_mask
+    }
+
+    pub fn mark_current_player_left_hazard_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.left_hazard_target_mask |= mask;
+        player.left_hazard_target_mask
+    }
+
+    pub fn clear_current_player_left_hazard_targets(&mut self) {
+        self.current_player_state_mut().left_hazard_target_mask = 0;
+    }
+
+    pub fn current_player_right_hazard_target_mask(&self) -> u8 {
+        self.current_player_state().right_hazard_target_mask
+    }
+
+    pub fn mark_current_player_right_hazard_target(&mut self, mask: u8) -> u8 {
+        let player = self.current_player_state_mut();
+        player.right_hazard_target_mask |= mask;
+        player.right_hazard_target_mask
+    }
+
+    pub fn clear_current_player_right_hazard_targets(&mut self) {
+        self.current_player_state_mut().right_hazard_target_mask = 0;
+    }
+
+    pub fn set_fuel_bargraph_index(&mut self, index: i32) {
+        self.fuel_bargraph_index = index.max(0);
+    }
+
+    pub fn fuel_bargraph_index(&self) -> i32 {
+        self.fuel_bargraph_index
     }
 
     pub fn active_ball(&self) -> Option<&Ball> {
@@ -900,11 +1103,13 @@ impl SimulationState {
 
     pub fn special_add_score(&mut self, amount: u64) -> u64 {
         let bonus_active = self.bonus_score_active;
+        let bonus_hold_active = self.bonus_hold_active;
         let jackpot_active = self.jackpot_score_active;
         let score_multiplier = self.score_multiplier;
         let score_added = self.score_added;
 
         self.bonus_score_active = false;
+        self.bonus_hold_active = false;
         self.jackpot_score_active = false;
         self.score_multiplier = 0;
         self.score_added = 0;
@@ -916,12 +1121,34 @@ impl SimulationState {
         let e9_after = self.current_player_state().score_e9_part;
 
         self.bonus_score_active = bonus_active;
+        self.bonus_hold_active = bonus_hold_active;
         self.jackpot_score_active = jackpot_active;
         self.score_multiplier = score_multiplier;
         self.score_added = score_added;
 
         u64::from(e9_after.saturating_sub(e9_before)) * 1_000_000_000
             + score_after.saturating_sub(score_before)
+    }
+
+    pub fn special_add_score_mission(&mut self, amount: u64) -> u64 {
+        let mission_amount = if self.full_tilt_mode {
+            amount.saturating_add(self.jackpot_score())
+        } else {
+            amount
+        };
+        let awarded = self.special_add_score(mission_amount);
+        if self.full_tilt_mode {
+            self.current_player_state_mut().jackpot_score = 500_000;
+        }
+        awarded
+    }
+
+    pub fn display_info_text(&mut self, text: impl Into<String>, duration_seconds: f32) {
+        self.info_box.display(text, duration_seconds, false);
+    }
+
+    pub fn info_text(&self) -> Option<&str> {
+        self.info_box.current_text()
     }
 
     fn update_activity_state(&mut self, dt: f32) {
@@ -1207,6 +1434,32 @@ mod tests {
         assert!(simulation.bonus_score_active);
         assert!(simulation.jackpot_score_active);
         assert_eq!(simulation.score_multiplier, 4);
+    }
+
+    #[test]
+    fn mission_special_add_score_uses_jackpot_and_resets_it_in_full_tilt_mode() {
+        let mut simulation = SimulationState::default();
+        simulation.full_tilt_mode = true;
+        simulation.player_scores[0].jackpot_score = 125_000;
+
+        let awarded = simulation.special_add_score_mission(750_000);
+
+        assert_eq!(awarded, 875_000);
+        assert_eq!(simulation.score(), 875_000);
+        assert_eq!(simulation.jackpot_score(), 500_000);
+    }
+
+    #[test]
+    fn mission_special_add_score_leaves_jackpot_alone_outside_full_tilt_mode() {
+        let mut simulation = SimulationState::default();
+        simulation.full_tilt_mode = false;
+        simulation.player_scores[0].jackpot_score = 125_000;
+
+        let awarded = simulation.special_add_score_mission(750_000);
+
+        assert_eq!(awarded, 750_000);
+        assert_eq!(simulation.score(), 750_000);
+        assert_eq!(simulation.jackpot_score(), 125_000);
     }
 
     #[test]

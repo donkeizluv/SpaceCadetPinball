@@ -11,6 +11,8 @@ pub struct RolloverMechanic {
 }
 
 impl RolloverMechanic {
+    const SHIP_REFUELED_TEXT: &str = "Ship Re-Fueled";
+
     pub fn new(id: ComponentId, name: &'static str) -> Self {
         Self::from_state(ComponentState::new(id, name).with_control("RolloverControl"))
     }
@@ -22,6 +24,18 @@ impl RolloverMechanic {
             state,
             rollover_flag: false,
             rearm_timer_remaining: None,
+        }
+    }
+
+    fn fuel_rollover_rule(&self) -> Option<(i32, &'static str)> {
+        match self.state.control_name {
+            Some("FuelRollover1Control") => Some((1, "literoll179")),
+            Some("FuelRollover2Control") => Some((3, "literoll180")),
+            Some("FuelRollover3Control") => Some((5, "literoll181")),
+            Some("FuelRollover4Control") => Some((7, "literoll182")),
+            Some("FuelRollover5Control") => Some((9, "literoll183")),
+            Some("FuelRollover6Control") => Some((11, "literoll184")),
+            _ => None,
         }
     }
 }
@@ -46,7 +60,7 @@ impl GameplayComponent for RolloverMechanic {
     fn on_message(
         &mut self,
         message: TableMessage,
-        _simulation: &mut SimulationState,
+        simulation: &mut SimulationState,
         _table_state: &TableInputState,
     ) {
         match message {
@@ -63,6 +77,25 @@ impl GameplayComponent for RolloverMechanic {
                 }
                 self.rollover_flag = !self.rollover_flag;
                 self.state.sprite_index = if self.rollover_flag { -1 } else { 0 };
+
+                if let Some((threshold, indicator_light_name)) = self.fuel_rollover_rule() {
+                    if simulation.fuel_bargraph_index() > threshold {
+                        simulation.queue_component_message(
+                            indicator_light_name,
+                            TableMessage::with_value(MessageCode::TLightTurnOffTimed, 0.05),
+                        );
+                    } else {
+                        simulation.queue_component_message(
+                            "fuel_bargraph",
+                            TableMessage::with_value(
+                                MessageCode::TLightGroupToggleSplitIndex,
+                                threshold as f32,
+                            ),
+                        );
+                        simulation.display_info_text(Self::SHIP_REFUELED_TEXT, 2.0);
+                    }
+                    simulation.add_score(self.state.collision_score());
+                }
             }
             _ => {}
         }
@@ -163,5 +196,63 @@ mod tests {
         );
         assert_eq!(rollover.state.sprite_index, 0);
         assert!(!rollover.rollover_flag);
+    }
+
+    #[test]
+    fn fuel_rollover_refuels_bargraph_when_below_threshold() {
+        let mut rollover = RolloverMechanic::from_state(
+            ComponentState::new(ComponentId(1), "a_roll179")
+                .with_control("FuelRollover1Control")
+                .with_scoring([500]),
+        );
+        let mut simulation = SimulationState::default();
+        let table_state = TableInputState::default();
+
+        rollover.on_collision(
+            0,
+            CollisionEdgeRole::Solid,
+            CollisionContact::new(crate::engine::math::Vec2::ZERO, crate::engine::math::Vec2::ZERO, 0.0),
+            &mut simulation,
+            &table_state,
+        );
+
+        assert_eq!(simulation.score(), 500);
+        assert_eq!(simulation.info_text(), Some("Ship Re-Fueled"));
+        assert_eq!(
+            simulation.drain_pending_component_messages(),
+            vec![(
+                "fuel_bargraph".to_string(),
+                TableMessage::with_value(MessageCode::TLightGroupToggleSplitIndex, 1.0),
+            )]
+        );
+    }
+
+    #[test]
+    fn fuel_rollover_flashes_indicator_when_bargraph_already_ahead() {
+        let mut rollover = RolloverMechanic::from_state(
+            ComponentState::new(ComponentId(1), "a_roll180")
+                .with_control("FuelRollover2Control")
+                .with_scoring([500]),
+        );
+        let mut simulation = SimulationState::default();
+        simulation.set_fuel_bargraph_index(4);
+        let table_state = TableInputState::default();
+
+        rollover.on_collision(
+            0,
+            CollisionEdgeRole::Solid,
+            CollisionContact::new(crate::engine::math::Vec2::ZERO, crate::engine::math::Vec2::ZERO, 0.0),
+            &mut simulation,
+            &table_state,
+        );
+
+        assert_eq!(simulation.score(), 500);
+        assert_eq!(
+            simulation.drain_pending_component_messages(),
+            vec![(
+                "literoll180".to_string(),
+                TableMessage::with_value(MessageCode::TLightTurnOffTimed, 0.05),
+            )]
+        );
     }
 }

@@ -17,7 +17,7 @@ fn main() -> Result<(), String> {
     let asset_load_failed = game_state.is_none();
     let mut table = game_state
         .as_ref()
-        .map(|state| gameplay::PinballTable::from_dat(&state.dat_file))
+        .map(|state| gameplay::PinballTable::from_dat_with_mode(&state.dat_file, state.full_tilt_mode))
         .unwrap_or_else(gameplay::PinballTable::new);
     let mut render_state = engine::render::RenderState::new();
     let mut stepper = engine::time::FixedStepper::new(Duration::from_secs_f64(1.0 / 120.0));

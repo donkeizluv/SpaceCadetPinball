@@ -1,11 +1,13 @@
 use crate::assets::DatFile;
-use crate::gameplay::components::group_name::{LEFT_FLIPPER_GROUP_NAME, PLUNGER_GROUP_NAME};
+use crate::gameplay::components::group_name::{
+    FUEL_BARGRAPH_GROUP_NAME, LEFT_FLIPPER_GROUP_NAME, PLUNGER_GROUP_NAME,
+};
 use crate::gameplay::components::{ComponentId, ComponentState, GameplayComponent};
 use crate::gameplay::mechanics::{
     BlockerMechanic, DrainMechanic, FlipperMechanic, GateMechanic, KickbackMechanic,
-    KickoutMechanic, LightRolloverMechanic, OnewayMechanic, PlungerMechanic,
-    PopupTargetMechanic, RolloverMechanic, SinkMechanic, SoloTargetMechanic, TripwireMechanic,
-    WallMechanic,
+    KickoutMechanic, LightBargraphMechanic, LightGroupMechanic, LightMechanic,
+    LightRolloverMechanic, OnewayMechanic, PlungerMechanic, PopupTargetMechanic,
+    RolloverMechanic, SinkMechanic, SoloTargetMechanic, TripwireMechanic, WallMechanic,
 };
 
 use super::PinballTable;
@@ -20,6 +22,9 @@ pub enum ComponentKind {
     Kickback,
     Kickout,
     Sink,
+    Light,
+    LightBargraph,
+    LightGroup,
     PopupTarget,
     SoloTarget,
     Wall,
@@ -176,6 +181,9 @@ pub fn default_component_definitions() -> Vec<ComponentDefinition> {
     definitions.extend(wall_component_definitions());
     definitions.extend(solo_target_component_definitions());
     definitions.extend(popup_target_component_definitions());
+    definitions.extend(light_component_definitions());
+    definitions.extend(light_bargraph_component_definitions());
+    definitions.extend(light_group_component_definitions());
 
     definitions
 }
@@ -309,7 +317,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover1Control")
-        .with_primary_group("a_roll179"),
+        .with_primary_group("a_roll179")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(32),
             "a_roll180",
@@ -317,7 +326,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover2Control")
-        .with_primary_group("a_roll180"),
+        .with_primary_group("a_roll180")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(33),
             "a_roll181",
@@ -325,7 +335,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover3Control")
-        .with_primary_group("a_roll181"),
+        .with_primary_group("a_roll181")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(34),
             "a_roll182",
@@ -333,7 +344,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover4Control")
-        .with_primary_group("a_roll182"),
+        .with_primary_group("a_roll182")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(35),
             "a_roll183",
@@ -341,7 +353,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover5Control")
-        .with_primary_group("a_roll183"),
+        .with_primary_group("a_roll183")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(36),
             "a_roll184",
@@ -349,7 +362,8 @@ fn sensor_component_definitions() -> [ComponentDefinition; 26] {
             "TRollover",
         )
         .with_control("FuelRollover6Control")
-        .with_primary_group("a_roll184"),
+        .with_primary_group("a_roll184")
+        .with_scoring(&[500]),
         ComponentDefinition::new(
             ComponentId(37),
             "s_trip1",
@@ -508,6 +522,118 @@ fn popup_target_component_definitions() -> [ComponentDefinition; 9] {
     ]
 }
 
+fn light_component_definitions() -> [ComponentDefinition; 22] {
+    [
+        ComponentDefinition::new(ComponentId(68), "lite58", ComponentKind::Light, "TLight")
+            .with_control("BonusHoldLightControl")
+            .with_primary_group("lite58"),
+        ComponentDefinition::new(ComponentId(69), "lite59", ComponentKind::Light, "TLight")
+            .with_control("BonusLightControl")
+            .with_primary_group("lite59"),
+        ComponentDefinition::new(ComponentId(70), "lite60", ComponentKind::Light, "TLight")
+            .with_control("JackpotLightControl")
+            .with_primary_group("lite60"),
+        ComponentDefinition::new(ComponentId(71), "lite61", ComponentKind::Light, "TLight")
+            .with_control("FlagLightControl")
+            .with_primary_group("lite61"),
+        ComponentDefinition::new(ComponentId(72), "literoll179", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll179"),
+        ComponentDefinition::new(ComponentId(73), "literoll180", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll180"),
+        ComponentDefinition::new(ComponentId(74), "literoll181", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll181"),
+        ComponentDefinition::new(ComponentId(75), "literoll182", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll182"),
+        ComponentDefinition::new(ComponentId(76), "literoll183", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll183"),
+        ComponentDefinition::new(ComponentId(77), "literoll184", ComponentKind::Light, "TLight")
+            .with_primary_group("literoll184"),
+        ComponentDefinition::new(ComponentId(78), "lite70", ComponentKind::Light, "TLight")
+            .with_primary_group("lite70"),
+        ComponentDefinition::new(ComponentId(79), "lite71", ComponentKind::Light, "TLight")
+            .with_primary_group("lite71"),
+        ComponentDefinition::new(ComponentId(80), "lite72", ComponentKind::Light, "TLight")
+            .with_primary_group("lite72"),
+        ComponentDefinition::new(ComponentId(81), "lite101", ComponentKind::Light, "TLight")
+            .with_primary_group("lite101"),
+        ComponentDefinition::new(ComponentId(82), "lite102", ComponentKind::Light, "TLight")
+            .with_primary_group("lite102"),
+        ComponentDefinition::new(ComponentId(83), "lite103", ComponentKind::Light, "TLight")
+            .with_primary_group("lite103"),
+        ComponentDefinition::new(ComponentId(84), "lite104", ComponentKind::Light, "TLight")
+            .with_primary_group("lite104"),
+        ComponentDefinition::new(ComponentId(85), "lite105", ComponentKind::Light, "TLight")
+            .with_primary_group("lite105"),
+        ComponentDefinition::new(ComponentId(86), "lite106", ComponentKind::Light, "TLight")
+            .with_primary_group("lite106"),
+        ComponentDefinition::new(ComponentId(87), "lite107", ComponentKind::Light, "TLight")
+            .with_primary_group("lite107"),
+        ComponentDefinition::new(ComponentId(88), "lite108", ComponentKind::Light, "TLight")
+            .with_primary_group("lite108"),
+        ComponentDefinition::new(ComponentId(89), "lite109", ComponentKind::Light, "TLight")
+            .with_primary_group("lite109"),
+    ]
+}
+
+fn light_group_component_definitions() -> [ComponentDefinition; 6] {
+    [
+        ComponentDefinition::new(
+            ComponentId(91),
+            "bumper_target_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_control("MedalLightGroupControl")
+        .with_primary_group("bumper_target_lights"),
+        ComponentDefinition::new(
+            ComponentId(92),
+            "top_target_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_control("MultiplierLightGroupControl")
+        .with_primary_group("top_target_lights"),
+        ComponentDefinition::new(
+            ComponentId(93),
+            "top_circle_tgt_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_primary_group("top_circle_tgt_lights"),
+        ComponentDefinition::new(
+            ComponentId(94),
+            "ramp_tgt_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_primary_group("ramp_tgt_lights"),
+        ComponentDefinition::new(
+            ComponentId(95),
+            "lchute_tgt_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_primary_group("lchute_tgt_lights"),
+        ComponentDefinition::new(
+            ComponentId(96),
+            "bpr_solotgt_lights",
+            ComponentKind::LightGroup,
+            "TLightGroup",
+        )
+        .with_primary_group("bpr_solotgt_lights"),
+    ]
+}
+
+fn light_bargraph_component_definitions() -> [ComponentDefinition; 1] {
+    [ComponentDefinition::new(
+        ComponentId(90),
+        FUEL_BARGRAPH_GROUP_NAME,
+        ComponentKind::LightBargraph,
+        "TLightBargraph",
+    )
+    .with_primary_group(FUEL_BARGRAPH_GROUP_NAME)]
+}
+
 pub fn install_components(
     table: &mut PinballTable,
     definitions: &[ComponentDefinition],
@@ -565,6 +691,12 @@ fn component_from_definition(
         ComponentKind::Kickback => Box::new(KickbackMechanic::from_state(state)),
         ComponentKind::Kickout => Box::new(KickoutMechanic::from_state(state)),
         ComponentKind::Sink => Box::new(SinkMechanic::from_state(state)),
+        ComponentKind::Light => Box::new(LightMechanic::from_state(state)),
+        ComponentKind::LightBargraph => Box::new(LightBargraphMechanic::from_state(state, 6)),
+        ComponentKind::LightGroup => Box::new(LightGroupMechanic::from_state(
+            state,
+            if definition.name == "top_target_lights" { 4 } else { 3 },
+        )),
         ComponentKind::PopupTarget => Box::new(PopupTargetMechanic::from_state(state)),
         ComponentKind::SoloTarget => Box::new(SoloTargetMechanic::from_state(state)),
         ComponentKind::Wall => Box::new(WallMechanic::from_state(state)),
@@ -739,11 +871,36 @@ mod tests {
         group
     }
 
+    fn light_bargraph_group(group_id: usize, group_name: &str, timer_values: &[f32]) -> GroupData {
+        let mut group = named_group(group_id, group_name);
+        group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes(
+                [200_i16, 0_i16]
+                    .into_iter()
+                    .flat_map(i16::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: ((timer_values.len() + 1) * std::mem::size_of::<f32>()) as i32,
+            payload: EntryPayload::RawBytes(
+                std::iter::once(904.0_f32)
+                    .chain(timer_values.iter().copied())
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        group
+    }
+
     #[test]
     fn default_definitions_match_current_playable_slice() {
         let definitions = default_component_definitions();
 
-        assert_eq!(definitions.len(), 67);
+        assert_eq!(definitions.len(), 96);
         assert_eq!(definitions[0].source_class, "TFlipper");
         assert_eq!(definitions[0].control_name, Some("FlipperControl"));
         assert_eq!(definitions[1].source_class, "TPlunger");
@@ -766,6 +923,22 @@ mod tests {
         assert_eq!(definitions[57].control_name, Some("WormHoleDestinationControl"));
         assert_eq!(definitions[58].source_class, "TPopupTarget");
         assert_eq!(definitions[66].control_name, Some("MultiplierTargetControl"));
+        assert_eq!(definitions[67].source_class, "TLight");
+        assert_eq!(definitions[70].control_name, Some("FlagLightControl"));
+        assert_eq!(definitions[71].primary_group_name, Some("literoll179"));
+        assert_eq!(definitions[76].primary_group_name, Some("literoll184"));
+        assert_eq!(definitions[77].primary_group_name, Some("lite70"));
+        assert_eq!(definitions[79].primary_group_name, Some("lite72"));
+        assert_eq!(definitions[80].primary_group_name, Some("lite101"));
+        assert_eq!(definitions[83].primary_group_name, Some("lite104"));
+        assert_eq!(definitions[88].primary_group_name, Some("lite109"));
+        assert_eq!(definitions[89].source_class, "TLightBargraph");
+        assert_eq!(definitions[90].control_name, Some("MedalLightGroupControl"));
+        assert_eq!(definitions[91].control_name, Some("MultiplierLightGroupControl"));
+        assert_eq!(definitions[92].primary_group_name, Some("top_circle_tgt_lights"));
+        assert_eq!(definitions[93].primary_group_name, Some("ramp_tgt_lights"));
+        assert_eq!(definitions[94].primary_group_name, Some("lchute_tgt_lights"));
+        assert_eq!(definitions[95].primary_group_name, Some("bpr_solotgt_lights"));
     }
 
     #[test]
@@ -785,9 +958,9 @@ mod tests {
 
         let table = PinballTable::from_dat(&dat_file);
 
-        assert_eq!(table.component_count(), 67);
-        assert_eq!(table.link_report().component_count, 67);
-        assert_eq!(table.link_report().resolved_group_count, 66);
+        assert_eq!(table.component_count(), 96);
+        assert_eq!(table.link_report().component_count, 96);
+        assert_eq!(table.link_report().resolved_group_count, 95);
         assert!(table.link_report().missing_groups.is_empty());
         assert_eq!(
             table
@@ -836,6 +1009,24 @@ mod tests {
                 .find_component("a_targ4")
                 .and_then(|component| component.state().control_name),
             Some("MedalTargetControl")
+        );
+        assert_eq!(
+            table
+                .find_component("lite60")
+                .and_then(|component| component.state().control_name),
+            Some("JackpotLightControl")
+        );
+        assert_eq!(
+            table
+                .find_component(FUEL_BARGRAPH_GROUP_NAME)
+                .map(|component| component.name()),
+            Some(FUEL_BARGRAPH_GROUP_NAME)
+        );
+        assert_eq!(
+            table
+                .find_component("top_target_lights")
+                .and_then(|component| component.state().control_name),
+            Some("MultiplierLightGroupControl")
         );
     }
 
@@ -917,5 +1108,27 @@ mod tests {
         table.tick_components(0.01);
         let target = table.find_component("a_targ1").expect("popup target should exist");
         assert!(target.is_active());
+    }
+
+    #[test]
+    fn table_from_dat_applies_light_bargraph_timer_attribute() {
+        let dat_file = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![light_bargraph_group(0, FUEL_BARGRAPH_GROUP_NAME, &[0.2, 0.1, 0.05, 0.05])],
+        };
+        let mut table = PinballTable::from_dat(&dat_file);
+
+        table.dispatch(TableMessage::with_value(MessageCode::TLightGroupToggleSplitIndex, 3.0));
+        let bargraph = table
+            .find_component(FUEL_BARGRAPH_GROUP_NAME)
+            .expect("fuel bargraph should exist");
+        assert_eq!(bargraph.state().message_field, 3);
+
+        table.tick_components(0.05);
+        let bargraph = table
+            .find_component(FUEL_BARGRAPH_GROUP_NAME)
+            .expect("fuel bargraph should exist");
+        assert_eq!(bargraph.state().message_field, 2);
     }
 }
