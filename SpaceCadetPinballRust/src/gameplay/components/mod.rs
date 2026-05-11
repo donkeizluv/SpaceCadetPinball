@@ -9,7 +9,7 @@ pub use group::{ComponentGroup, ComponentId};
 pub use group_name::*;
 pub use messages::{MessageCode, TableMessage};
 pub use table::{
-    BitmapVisualState, ComponentDefinition, ComponentKind, DrainResolution, HudVisualState,
+    BitmapCoordinateSpace, BitmapVisualState, ComponentDefinition, ComponentKind, DrainResolution, HudVisualState,
     LightVisualState, NumberWidgetVisualState, PinballTable, SequenceVisualState,
     SimulationState, TableInputState, TableLinkReport, TableVisual, TableVisualState,
     TextBoxVisualState,

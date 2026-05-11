@@ -22,7 +22,7 @@ pub use builder::{
 };
 pub use input::TableInputState;
 pub use visuals::{
-    BitmapVisualState, HudVisualState, LightVisualState, NumberWidgetVisualState,
+    BitmapCoordinateSpace, BitmapVisualState, HudVisualState, LightVisualState, NumberWidgetVisualState,
     SequenceVisualState, TableVisual, TableVisualState, TextBoxVisualState,
 };
 
@@ -244,6 +244,7 @@ impl PinballTable {
         let mut table = Self::default();
         table.link_report = builder::install_components(&mut table, definitions, dat_file);
         if let Some(dat_file) = dat_file {
+            table.configure_table_collision_space(dat_file);
             table.resolve_plunger_position(dat_file);
             table.apply_component_float_attributes(dat_file);
             table.register_collision_metadata(dat_file);
@@ -635,7 +636,8 @@ impl PinballTable {
                 CollisionGeometryKind::WallAttributes => {
                     for wall_code in [600_i16, 603_i16] {
                         let Some(edges) =
-                            dat_file.visual_collision_edges(
+                            dat_file.table_local_visual_collision_edges(
+                                0,
                                 group_index as usize,
                                 0,
                                 wall_code,
@@ -679,7 +681,9 @@ impl PinballTable {
                     }
                 }
                 CollisionGeometryKind::OnewayVisual => {
-                    let Some(points) = dat_file.visual_primary_points(group_index as usize, 0) else {
+                    let Some(points) =
+                        dat_file.table_local_visual_primary_points(0, group_index as usize, 0)
+                    else {
                         continue;
                     };
                     if points.len() != 2 {
@@ -701,7 +705,7 @@ impl PinballTable {
                 }
                 CollisionGeometryKind::VisualCircleAttribute306 => {
                     let Some(VisualCollisionEdge::Circle { center, radius }) =
-                        dat_file.visual_circle_attribute_306(group_index as usize, 0)
+                        dat_file.table_local_visual_circle_attribute_306(0, group_index as usize, 0)
                     else {
                         continue;
                     };
@@ -718,7 +722,61 @@ impl PinballTable {
         }
     }
 
+    fn configure_table_collision_space(&mut self, dat_file: &DatFile) {
+        let Some(points) = dat_file.table_local_collision_outline_points(0) else {
+            return;
+        };
+        if points.len() < 2 {
+            return;
+        }
+
+        let min_x = points
+            .iter()
+            .map(|point| point.0)
+            .fold(f32::INFINITY, f32::min);
+        let max_x = points
+            .iter()
+            .map(|point| point.0)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let min_y = points
+            .iter()
+            .map(|point| point.1)
+            .fold(f32::INFINITY, f32::min);
+        let max_y = points
+            .iter()
+            .map(|point| point.1)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        if !min_x.is_finite()
+            || !max_x.is_finite()
+            || !min_y.is_finite()
+            || !max_y.is_finite()
+            || max_x <= min_x
+            || max_y <= min_y
+        {
+            return;
+        }
+
+        self.simulation.edge_manager =
+            EdgeManager::for_world_bounds(min_x, min_y, max_x - min_x, max_y - min_y);
+        for index in 0..points.len() {
+            let start = points[index];
+            let end = points[(index + 1) % points.len()];
+            self.simulation.edge_manager.add_wall(
+                crate::engine::physics::EdgeSegment::new(
+                    Vec2::new(start.0, start.1),
+                    Vec2::new(end.0, end.1),
+                ),
+            );
+        }
+    }
+
     fn resolve_plunger_position(&mut self, dat_file: &DatFile) {
+        // Coordinate note:
+        // The current Rust runtime treats spawned ball positions as table-local 2D pixels.
+        // Original DAT attributes such as `601` may belong to a different space in the
+        // source engine, so any translation decision should stay centralized here until the
+        // broader world/projection cleanup is ported.
         let Some(plunger) = self.find_component("plunger") else {
             return;
         };
@@ -729,12 +787,13 @@ impl PinballTable {
             return;
         }
 
-        let Some(values) = dat_file.float_attribute(group_index as usize, 0, 601) else {
+        let Some((x, y)) = dat_file
+            .feed_position_table_local(0, group_index as usize, 0)
+            .or_else(|| dat_file.feed_position_world_point(group_index as usize, 0))
+        else {
             return;
         };
-        if values.len() >= 2 {
-            self.simulation.plunger_position = Vec2::new(values[0], values[1]);
-        }
+        self.simulation.plunger_position = Vec2::new(x, y);
     }
 
     fn apply_component_float_attributes(&mut self, dat_file: &DatFile) {

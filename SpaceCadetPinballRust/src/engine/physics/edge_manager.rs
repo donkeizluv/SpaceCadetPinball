@@ -43,14 +43,14 @@ struct GridConfig {
 }
 
 impl GridConfig {
-    fn new(width: f32, height: f32) -> Self {
+    fn new(min_x: f32, min_y: f32, width: f32, height: f32) -> Self {
         let max_box_x = 10;
         let max_box_y = 15;
         Self {
-            min_x: 0.0,
-            min_y: 0.0,
-            max_x: width,
-            max_y: height,
+            min_x,
+            min_y,
+            max_x: min_x + width,
+            max_y: min_y + height,
             advance_x: width / max_box_x as f32,
             advance_y: height / max_box_y as f32,
             max_box_x,
@@ -89,7 +89,7 @@ pub struct EdgeManager {
 
 impl EdgeManager {
     pub fn for_table_bounds(width: f32, height: f32) -> Self {
-        let grid_config = GridConfig::new(width, height);
+        let grid_config = GridConfig::new(0.0, 0.0, width, height);
         Self {
             bounds: vec![
                 EdgeSegment::new(Vec2::new(8.0, 8.0), Vec2::new(width - 8.0, 8.0)),
@@ -99,6 +99,19 @@ impl EdgeManager {
                     Vec2::new(width - 8.0, height - 18.0),
                 ),
             ],
+            walls: Vec::new(),
+            grid: vec![Vec::new(); grid_config.total_box_count()],
+            grid_config,
+            left_flipper: FlipperEdge::new(FlipperSide::Left),
+            right_flipper: FlipperEdge::new(FlipperSide::Right),
+            restitution: 0.82,
+        }
+    }
+
+    pub fn for_world_bounds(min_x: f32, min_y: f32, width: f32, height: f32) -> Self {
+        let grid_config = GridConfig::new(min_x, min_y, width, height);
+        Self {
+            bounds: Vec::new(),
             walls: Vec::new(),
             grid: vec![Vec::new(); grid_config.total_box_count()],
             grid_config,
@@ -364,6 +377,23 @@ mod tests {
         edge_manager.prepare_collision_pass(&mut ball);
         let contact = edge_manager.resolve_ball_with_filter(&mut ball, |_| true);
         assert!(contact.is_none());
+    }
+
+    #[test]
+    fn world_bounds_grid_supports_negative_coordinate_collision_space() {
+        let mut edge_manager = EdgeManager::for_world_bounds(-20.0, -30.0, 80.0, 90.0);
+        edge_manager.add_owned_wall(
+            EdgeSegment::new(Vec2::new(-5.0, 10.0), Vec2::new(15.0, 10.0)),
+            Some(4),
+        );
+
+        let mut ball = Ball::ready_at(Vec2::new(5.0, 4.0));
+        ball.velocity = Vec2::new(0.0, 20.0);
+        edge_manager.prepare_collision_pass(&mut ball);
+
+        let contact = edge_manager.resolve_ball_with_filter(&mut ball, |_| true);
+        assert!(contact.is_some());
+        assert_eq!(contact.and_then(|contact| contact.owner_token), Some(4));
     }
 
     #[test]

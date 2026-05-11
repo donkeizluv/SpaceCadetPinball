@@ -1,4 +1,3 @@
-use crate::engine::physics::Ball;
 use crate::gameplay::components::{
     ComponentId, ComponentState, GameplayComponent, MessageCode, SimulationState, TableInputState,
     TableMessage,
@@ -217,6 +216,7 @@ impl GameplayComponent for PlungerMechanic {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::physics::Ball;
     use crate::gameplay::components::TableMessage;
 
     use super::*;

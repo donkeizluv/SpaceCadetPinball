@@ -1,3 +1,5 @@
+use crate::engine::geom::RectI;
+
 use super::{Bitmap8, BitmapType, DatFile, EntryData, EntryPayload, FieldType, GroupData, ZMap};
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +48,22 @@ pub struct MessageFont {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraProjection {
+    pub matrix: [[f32; 4]; 3],
+    pub distance: f32,
+    pub z_min: f32,
+    pub z_scaler: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TableView {
+    pub resolution: usize,
+    pub table_origin: (i32, i32),
+    pub projection_center: Option<(f32, f32)>,
+    pub projection: Option<CameraProjection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VisualCollisionMetadata {
     pub collision_group: u32,
     pub smoothness: f32,
@@ -66,6 +84,130 @@ pub enum VisualCollisionEdge {
 impl MessageFont {
     pub fn glyph(&self, character: u8) -> Option<MessageFontGlyph> {
         self.glyphs.get(character as usize).copied().flatten()
+    }
+}
+
+impl CameraProjection {
+    fn matrix_vector_multiply(self, world_x: f32, world_y: f32, world_z: f32) -> (f32, f32, f32) {
+        (
+            world_x * self.matrix[0][0]
+                + world_y * self.matrix[0][1]
+                + world_z * self.matrix[0][2]
+                + self.matrix[0][3],
+            world_x * self.matrix[1][0]
+                + world_y * self.matrix[1][1]
+                + world_z * self.matrix[1][2]
+                + self.matrix[1][3],
+            world_x * self.matrix[2][0]
+                + world_y * self.matrix[2][1]
+                + world_z * self.matrix[2][2]
+                + self.matrix[2][3],
+        )
+    }
+
+    pub fn z_distance(self, world_x: f32, world_y: f32, world_z: f32) -> f32 {
+        let (x, y, z) = self.matrix_vector_multiply(world_x, world_y, world_z);
+        (x * x + y * y + z * z).sqrt()
+    }
+
+    pub fn project_to_2d(self, world_x: f32, world_y: f32, world_z: f32, center_x: f32, center_y: f32) -> Option<(f32, f32)> {
+        let (projected_x, projected_y, projected_z) =
+            self.matrix_vector_multiply(world_x, world_y, world_z);
+
+        if projected_z.abs() <= f32::EPSILON {
+            return None;
+        }
+
+        Some((
+            projected_x * self.distance / projected_z + center_x,
+            projected_y * self.distance / projected_z + center_y,
+        ))
+    }
+
+    pub fn reverse_project_to_world_plane(
+        self,
+        projected_x: f32,
+        projected_y: f32,
+        center_x: f32,
+        center_y: f32,
+        world_z: f32,
+    ) -> Option<(f32, f32)> {
+        // Source-backed from proj::ReverseXForm in the decompiled C++ port.
+        // The original game uses one fixed perspective matrix family for tables,
+        // and solves x/y on a caller-chosen z plane (most often z = 0).
+        if self.distance.abs() <= f32::EPSILON {
+            return None;
+        }
+
+        let a = self.matrix[1][1];
+        let b = self.matrix[1][2];
+        let f = self.matrix[1][3];
+        let g = self.matrix[2][3];
+        let x2 = (projected_x - center_x) / self.distance;
+        let y2 = (projected_y - center_y) / self.distance;
+        let denominator = a + b * y2;
+        if denominator.abs() <= f32::EPSILON {
+            return None;
+        }
+
+        let world_y = (y2 * (a * world_z + g) - b * world_z - f) / denominator;
+        let world_x = x2 * (a * world_z - b * world_y + g);
+        Some((world_x, world_y))
+    }
+}
+
+impl TableView {
+    pub fn bitmap_rect_to_table_local(self, mut rect: RectI) -> RectI {
+        rect.x -= self.table_origin.0;
+        rect.y -= self.table_origin.1;
+        rect
+    }
+
+    pub fn project_world_point_to_table_local(
+        self,
+        world_x: f32,
+        world_y: f32,
+        world_z: f32,
+    ) -> Option<(f32, f32)> {
+        let projection = self.projection?;
+        let (center_x, center_y) = self.projection_center?;
+        let (x, y) = projection.project_to_2d(world_x, world_y, world_z, center_x, center_y)?;
+        Some((x - self.table_origin.0 as f32, y - self.table_origin.1 as f32))
+    }
+
+    pub fn table_local_point_to_world_plane(
+        self,
+        local_x: f32,
+        local_y: f32,
+        world_z: f32,
+    ) -> Option<(f32, f32)> {
+        let projection = self.projection?;
+        let (center_x, center_y) = self.projection_center?;
+        projection.reverse_project_to_world_plane(
+            local_x + self.table_origin.0 as f32,
+            local_y + self.table_origin.1 as f32,
+            center_x,
+            center_y,
+            world_z,
+        )
+    }
+
+    pub fn project_world_centered_rect_to_table_local(
+        self,
+        world_x: f32,
+        world_y: f32,
+        world_z: f32,
+        width: u32,
+        height: u32,
+    ) -> Option<RectI> {
+        let (center_x, center_y) =
+            self.project_world_point_to_table_local(world_x, world_y, world_z)?;
+        Some(RectI::new(
+            (center_x - width as f32 * 0.5).round() as i32,
+            (center_y - height as f32 * 0.5).round() as i32,
+            width.max(1),
+            height.max(1),
+        ))
     }
 }
 
@@ -311,6 +453,189 @@ impl DatFile {
         Some((i32::from(bitmap.x_position), i32::from(bitmap.y_position)))
     }
 
+    pub fn table_view(&self, resolution: usize) -> Option<TableView> {
+        Some(TableView {
+            resolution,
+            table_origin: self.table_bitmap_origin(resolution)?,
+            projection_center: self.table_projection_center(resolution),
+            projection: self.camera_projection(resolution),
+        })
+    }
+
+    pub fn camera_info_group_index(&self, resolution: usize) -> Option<usize> {
+        self.record_labeled("camera_info")?.checked_add(resolution)
+    }
+
+    pub fn camera_projection(&self, resolution: usize) -> Option<CameraProjection> {
+        let values = self
+            .group(self.camera_info_group_index(resolution)?)?
+            .float_values(FieldType::FloatArray)?;
+        if values.len() < 15 {
+            return None;
+        }
+
+        Some(CameraProjection {
+            matrix: [
+                [values[0], values[1], values[2], values[3]],
+                [values[4], values[5], values[6], values[7]],
+                [values[8], values[9], values[10], values[11]],
+            ],
+            distance: values[12],
+            z_min: values[13],
+            z_scaler: values[14],
+        })
+    }
+
+    pub fn table_projection_center(&self, resolution: usize) -> Option<(f32, f32)> {
+        let group_index = self.table_group_index()?;
+        let values = self.float_attribute(group_index, 0, 700_i16.checked_add(resolution as i16)?)?;
+        if values.len() < 2 {
+            return None;
+        }
+        Some((values[0], values[1]))
+    }
+
+    pub fn table_collision_outline_points(&self) -> Option<Vec<(f32, f32)>> {
+        let group_index = self.table_group_index()?;
+        self.visual_primary_points(group_index, 0)
+    }
+
+    pub fn table_local_collision_outline_points(&self, resolution: usize) -> Option<Vec<(f32, f32)>> {
+        let points = self.table_collision_outline_points()?;
+        points
+            .into_iter()
+            .map(|(x, y)| self.project_world_point_to_table_local(resolution, x, y, 0.0))
+            .collect()
+    }
+
+    pub fn bitmap_rect(&self, group_index: usize, resolution: usize) -> Option<RectI> {
+        let bitmap = self.get_bitmap(group_index, resolution)?;
+        Some(RectI::new(
+            i32::from(bitmap.x_position),
+            i32::from(bitmap.y_position),
+            bitmap.width as u32,
+            bitmap.height as u32,
+        ))
+    }
+
+    pub fn table_local_bitmap_rect(&self, group_index: usize, resolution: usize) -> Option<RectI> {
+        Some(
+            self.table_view(resolution)?
+                .bitmap_rect_to_table_local(self.bitmap_rect(group_index, resolution)?),
+        )
+    }
+
+    pub fn project_world_point_to_table_local(
+        &self,
+        resolution: usize,
+        world_x: f32,
+        world_y: f32,
+        world_z: f32,
+    ) -> Option<(f32, f32)> {
+        self.table_view(resolution)?
+            .project_world_point_to_table_local(world_x, world_y, world_z)
+    }
+
+    pub fn table_local_point_to_world_plane(
+        &self,
+        resolution: usize,
+        local_x: f32,
+        local_y: f32,
+        world_z: f32,
+    ) -> Option<(f32, f32)> {
+        self.table_view(resolution)?
+            .table_local_point_to_world_plane(local_x, local_y, world_z)
+    }
+
+    pub fn point_attribute(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+        first_value: i16,
+    ) -> Option<(f32, f32)> {
+        let values = self.float_attribute(group_index, group_index_offset, first_value)?;
+        Some((*values.first()?, *values.get(1)?))
+    }
+
+    pub fn point3_attribute(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+        first_value: i16,
+    ) -> Option<(f32, f32, f32)> {
+        let values = self.float_attribute(group_index, group_index_offset, first_value)?;
+        Some((*values.first()?, *values.get(1)?, *values.get(2)?))
+    }
+
+    pub fn feed_position_world_point(
+        &self,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<(f32, f32)> {
+        self.point_attribute(group_index, group_index_offset, 601)
+    }
+
+    pub fn feed_position_table_local(
+        &self,
+        resolution: usize,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<(f32, f32)> {
+        let (world_x, world_y) = self.feed_position_world_point(group_index, group_index_offset)?;
+        // Source-backed from TPlunger/TSink reading attribute 601 as a 2D world point,
+        // then rendering it through proj::xform_to_2d(vector2), which is the z = 0 plane.
+        self.project_world_point_to_table_local(resolution, world_x, world_y, 0.0)
+    }
+
+    pub fn project_world_centered_rect_to_table_local(
+        &self,
+        resolution: usize,
+        world_x: f32,
+        world_y: f32,
+        world_z: f32,
+        width: u32,
+        height: u32,
+    ) -> Option<RectI> {
+        self.table_view(resolution)?
+            .project_world_centered_rect_to_table_local(world_x, world_y, world_z, width, height)
+    }
+
+    pub fn depth_sorted_sequence_frame(
+        &self,
+        target_group_name: &str,
+        resolution: usize,
+        world_x: f32,
+        world_y: f32,
+        world_z: f32,
+    ) -> Option<SequenceFrame> {
+        let projection = self.camera_projection(resolution)?;
+        let start_index = self.record_labeled(target_group_name)?;
+        let sequence = self.bitmap_sequence_indices(target_group_name, resolution)?;
+        let frame_count = sequence.len();
+        if frame_count == 0 {
+            return None;
+        }
+
+        let target_depth = projection.z_distance(world_x, world_y, world_z);
+        let mut frame_index = frame_count - 1;
+
+        for candidate_index in 0..frame_count.saturating_sub(1) {
+            let (sample_x, sample_y, sample_z) =
+                self.point3_attribute(start_index, candidate_index, 501)?;
+            let sample_depth = projection.z_distance(sample_x, sample_y, sample_z);
+            if sample_depth <= target_depth {
+                frame_index = candidate_index;
+                break;
+            }
+        }
+
+        Some(SequenceFrame {
+            group_index: sequence[frame_index],
+            frame_index,
+            frame_count,
+        })
+    }
+
     pub fn palette_bytes_for_group(&self, group_index: usize) -> Option<&[u8]> {
         self.group(group_index)?.raw_bytes(FieldType::Palette)
     }
@@ -332,6 +657,20 @@ impl DatFile {
             group_index,
             bitmap_resolution: bitmap.resolution,
         })
+    }
+
+    pub fn named_bitmap_rect(&self, target_group_name: &str, resolution: usize) -> Option<RectI> {
+        let frame = self.named_bitmap_frame(target_group_name, resolution)?;
+        self.bitmap_rect(frame.group_index, frame.bitmap_resolution)
+    }
+
+    pub fn table_local_named_bitmap_rect(
+        &self,
+        target_group_name: &str,
+        resolution: usize,
+    ) -> Option<RectI> {
+        let frame = self.named_bitmap_frame(target_group_name, resolution)?;
+        self.table_local_bitmap_rect(frame.group_index, frame.bitmap_resolution)
     }
 
     pub fn bitmap_sequence_indices(
@@ -378,6 +717,26 @@ impl DatFile {
             frame_index,
             frame_count,
         })
+    }
+
+    pub fn sequence_frame_rect(
+        &self,
+        target_group_name: &str,
+        resolution: usize,
+        frame_fraction: f32,
+    ) -> Option<RectI> {
+        let frame = self.sequence_frame(target_group_name, resolution, frame_fraction)?;
+        self.bitmap_rect(frame.group_index, resolution)
+    }
+
+    pub fn table_local_sequence_frame_rect(
+        &self,
+        target_group_name: &str,
+        resolution: usize,
+        frame_fraction: f32,
+    ) -> Option<RectI> {
+        let frame = self.sequence_frame(target_group_name, resolution, frame_fraction)?;
+        self.table_local_bitmap_rect(frame.group_index, resolution)
     }
 
     pub fn number_widget_digit_groups(
@@ -557,6 +916,43 @@ impl DatFile {
         Self::decode_visual_collision_edges(&float_values, offset)
     }
 
+    pub fn table_local_visual_collision_edges(
+        &self,
+        resolution: usize,
+        group_index: usize,
+        group_index_offset: usize,
+        first_value: i16,
+        offset: f32,
+    ) -> Option<Vec<VisualCollisionEdge>> {
+        let edges = self.visual_collision_edges(group_index, group_index_offset, first_value, offset)?;
+        edges.into_iter()
+            .map(|edge| match edge {
+                VisualCollisionEdge::Line { start, end } => {
+                    let start = self.project_world_point_to_table_local(resolution, start.0, start.1, 0.0)?;
+                    let end = self.project_world_point_to_table_local(resolution, end.0, end.1, 0.0)?;
+                    Some(VisualCollisionEdge::Line { start, end })
+                }
+                VisualCollisionEdge::Circle { center, radius } => {
+                    let center_local =
+                        self.project_world_point_to_table_local(resolution, center.0, center.1, 0.0)?;
+                    let edge_local = self.project_world_point_to_table_local(
+                        resolution,
+                        center.0 + radius,
+                        center.1,
+                        0.0,
+                    )?;
+                    let projected_radius =
+                        ((edge_local.0 - center_local.0).powi(2) + (edge_local.1 - center_local.1).powi(2))
+                            .sqrt();
+                    Some(VisualCollisionEdge::Circle {
+                        center: center_local,
+                        radius: if projected_radius == 0.0 { 0.001 } else { projected_radius },
+                    })
+                }
+            })
+            .collect()
+    }
+
     pub fn visual_primary_points(
         &self,
         group_index: usize,
@@ -567,6 +963,19 @@ impl DatFile {
             .group(state_index)?
             .float_values(FieldType::FloatArray)?;
         Self::decode_visual_primary_points(&float_values)
+    }
+
+    pub fn table_local_visual_primary_points(
+        &self,
+        resolution: usize,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<Vec<(f32, f32)>> {
+        let points = self.visual_primary_points(group_index, group_index_offset)?;
+        points
+            .into_iter()
+            .map(|(x, y)| self.project_world_point_to_table_local(resolution, x, y, 0.0))
+            .collect()
     }
 
     pub fn visual_circle_attribute_306(
@@ -590,6 +999,29 @@ impl DatFile {
         Some(VisualCollisionEdge::Circle {
             center: (center_x, center_y),
             radius: if radius == 0.0 { 0.001 } else { radius },
+        })
+    }
+
+    pub fn table_local_visual_circle_attribute_306(
+        &self,
+        resolution: usize,
+        group_index: usize,
+        group_index_offset: usize,
+    ) -> Option<VisualCollisionEdge> {
+        let VisualCollisionEdge::Circle { center, radius } =
+            self.visual_circle_attribute_306(group_index, group_index_offset)?
+        else {
+            return None;
+        };
+        let center_local =
+            self.project_world_point_to_table_local(resolution, center.0, center.1, 0.0)?;
+        let edge_local =
+            self.project_world_point_to_table_local(resolution, center.0 + radius, center.1, 0.0)?;
+        let projected_radius =
+            ((edge_local.0 - center_local.0).powi(2) + (edge_local.1 - center_local.1).powi(2)).sqrt();
+        Some(VisualCollisionEdge::Circle {
+            center: center_local,
+            radius: if projected_radius == 0.0 { 0.001 } else { projected_radius },
         })
     }
 
@@ -819,9 +1251,9 @@ impl Default for VisualCollisionMetadata {
 
 #[cfg(test)]
 mod tests {
-    use crate::assets::{DatFile, EntryData, EntryPayload, FieldType, GroupData};
+    use crate::assets::{Bitmap8, BitmapType, DatFile, EntryData, EntryPayload, FieldType, GroupData};
 
-    use super::{VisualCollisionEdge, VisualCollisionMetadata};
+    use super::{CameraProjection, VisualCollisionEdge, VisualCollisionMetadata};
 
     fn group_with_float_attribute(group_name: &str, values: &[f32]) -> GroupData {
         let mut group = GroupData::new(0);
@@ -836,6 +1268,34 @@ mod tests {
                     .collect(),
             ),
         });
+        group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: (values.len() * 4) as i32,
+            payload: EntryPayload::RawBytes(values.iter().copied().flat_map(f32::to_le_bytes).collect()),
+        });
+        group
+    }
+
+    fn bitmap_group(group_id: usize, group_name: &str, x: i16, y: i16, width: usize, height: usize) -> GroupData {
+        let mut group = GroupData::new(group_id);
+        group.group_name = Some(group_name.to_string());
+        group.bitmaps[0] = Some(Bitmap8 {
+            width,
+            height,
+            stride: width,
+            indexed_stride: width,
+            x_position: x,
+            y_position: y,
+            resolution: 0,
+            bitmap_type: BitmapType::RawBitmap,
+            indexed_pixels: vec![0; width * height],
+        });
+        group
+    }
+
+    fn raw_float_group(group_id: usize, group_name: &str, values: &[f32]) -> GroupData {
+        let mut group = GroupData::new(group_id);
+        group.group_name = Some(group_name.to_string());
         group.entries.push(EntryData {
             entry_type: FieldType::FloatArray,
             field_size: (values.len() * 4) as i32,
@@ -862,6 +1322,439 @@ mod tests {
                 end: (30.0, 40.0)
             }]
         );
+    }
+
+    #[test]
+    fn table_local_bitmap_rect_subtracts_table_origin() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                bitmap_group(0, "table", 137, 2, 365, 470),
+                bitmap_group(1, "plunger", 461, 383, 11, 42),
+            ],
+        };
+
+        assert_eq!(
+            dat.table_local_bitmap_rect(1, 0),
+            Some(crate::engine::geom::RectI::new(324, 381, 11, 42))
+        );
+    }
+
+    #[test]
+    fn table_view_wraps_origin_and_projection_metadata() {
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+                bitmap_group(2, "plunger", 461, 383, 11, 42),
+            ],
+        };
+
+        let table_view = dat.table_view(0).expect("table view");
+        assert_eq!(table_view.table_origin, (137, 2));
+        assert_eq!(table_view.projection_center, Some((183.0, 238.0)));
+        assert_eq!(
+            table_view.bitmap_rect_to_table_local(dat.bitmap_rect(2, 0).expect("bitmap rect")),
+            crate::engine::geom::RectI::new(324, 381, 11, 42)
+        );
+        let projected = table_view
+            .project_world_point_to_table_local(-7.020939, 10.084854, 0.0)
+            .expect("projected point");
+        assert!((projected.0 - 182.50).abs() < 0.1, "{projected:?}");
+        assert!((projected.1 - 341.41).abs() < 0.1, "{projected:?}");
+    }
+
+    #[test]
+    fn table_view_round_trips_projection_on_world_zero_plane() {
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+            ],
+        };
+
+        let table_view = dat.table_view(0).expect("table view");
+        let world_point = (-7.020939_f32, 10.084854_f32, 0.0_f32);
+        let local = table_view
+            .project_world_point_to_table_local(world_point.0, world_point.1, world_point.2)
+            .expect("projected point");
+        let restored = table_view
+            .table_local_point_to_world_plane(local.0, local.1, world_point.2)
+            .expect("restored point");
+
+        assert!((restored.0 - world_point.0).abs() < 0.1, "{restored:?}");
+        assert!((restored.1 - world_point.1).abs() < 0.1, "{restored:?}");
+    }
+
+    #[test]
+    fn table_view_projects_world_centered_rect_to_table_local() {
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+            ],
+        };
+
+        let rect = dat
+            .project_world_centered_rect_to_table_local(0, -7.020939, 10.084854, 0.0, 12, 12)
+            .expect("projected rect");
+        assert_eq!(rect, crate::engine::geom::RectI::new(177, 335, 12, 12));
+    }
+
+    #[test]
+    fn camera_projection_z_distance_matches_proj_cpp_magnitude_behavior() {
+        let projection = CameraProjection {
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0, 0.0],
+                [0.0, 0.0, 3.0, 0.0],
+            ],
+            distance: 1.0,
+            z_min: 0.0,
+            z_scaler: 1.0,
+        };
+
+        let distance = projection.z_distance(2.0, 3.0, 4.0);
+        assert!((distance - 184.0_f32.sqrt()).abs() < 0.001, "{distance}");
+    }
+
+    #[test]
+    fn table_local_named_and_sequence_rects_share_bitmap_conversion() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                bitmap_group(0, "table", 137, 2, 365, 470),
+                bitmap_group(1, "plunger", 461, 383, 11, 42),
+                bitmap_group(2, "plunger", 462, 384, 11, 43),
+            ],
+        };
+
+        assert_eq!(
+            dat.table_local_named_bitmap_rect("plunger", 0),
+            Some(crate::engine::geom::RectI::new(462 - 137, 384 - 2, 11, 43))
+        );
+        assert_eq!(
+            dat.table_local_sequence_frame_rect("plunger", 0, 0.0),
+            Some(crate::engine::geom::RectI::new(325, 382, 11, 43))
+        );
+        assert_eq!(
+            dat.table_local_sequence_frame_rect("plunger", 0, 1.0),
+            Some(crate::engine::geom::RectI::new(325, 382, 11, 43))
+        );
+    }
+
+    #[test]
+    fn table_collision_outline_points_decode_from_table_visual_payload() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute(
+                "table",
+                &[600.0, 5.0, -10.0, -20.0, 30.0, -20.0, 30.0, 40.0, -10.0, 40.0],
+            )],
+        };
+
+        assert_eq!(
+            dat.table_collision_outline_points(),
+            Some(vec![(-10.0, -20.0), (30.0, -20.0), (30.0, 40.0), (-10.0, 40.0)])
+        );
+    }
+
+    #[test]
+    fn feed_position_world_point_decodes_attribute_601_pair() {
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![group_with_float_attribute("plunger", &[601.0, 525.0, 315.0])],
+        };
+
+        assert_eq!(dat.feed_position_world_point(0, 0), Some((525.0, 315.0)));
+    }
+
+    #[test]
+    fn depth_sorted_sequence_frame_uses_visual_501_thresholds_like_tball_repaint() {
+        let mut first_frame = bitmap_group(1, "ball", 0, 0, 12, 12);
+        first_frame.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 16,
+            payload: EntryPayload::RawBytes(
+                [501.0_f32, 0.0, 0.0, 10.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        let mut second_frame = bitmap_group(2, "ball", 0, 0, 12, 12);
+        second_frame.group_name = None;
+        second_frame.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 16,
+            payload: EntryPayload::RawBytes(
+                [501.0_f32, 0.0, 0.0, 3.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0, 0.0,
+                        0.0, 0.0, 1.0, 0.0,
+                        1.0, 0.0, 1.0,
+                    ],
+                ),
+                first_frame,
+                second_frame,
+            ],
+        };
+
+        let far_frame = dat
+            .depth_sorted_sequence_frame("ball", 0, 0.0, 0.0, 12.0)
+            .expect("far frame");
+        assert_eq!(far_frame.frame_index, 0);
+        assert_eq!(far_frame.group_index, 1);
+
+        let near_frame = dat
+            .depth_sorted_sequence_frame("ball", 0, 0.0, 0.0, 5.0)
+            .expect("near frame");
+        assert_eq!(near_frame.frame_index, 1);
+        assert_eq!(near_frame.group_index, 2);
+    }
+
+    #[test]
+    fn project_world_point_to_table_local_uses_camera_info_and_table_center() {
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+            ],
+        };
+
+        let projected = dat
+            .project_world_point_to_table_local(0, -7.020939, 10.084854, 0.0)
+            .expect("projection should succeed");
+        assert!((projected.0 - 182.50).abs() < 0.1, "{projected:?}");
+        assert!((projected.1 - 341.41).abs() < 0.1, "{projected:?}");
+    }
+
+    #[test]
+    fn feed_position_table_local_projects_world_plane_attribute_601() {
+        let mut plunger = GroupData::new(2);
+        plunger.group_name = Some("plunger".to_string());
+        plunger.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [601.0_f32, -7.020939, 10.084854]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+                plunger,
+            ],
+        };
+
+        let projected = dat
+            .feed_position_table_local(0, 2, 0)
+            .expect("feed position should project");
+        assert!((projected.0 - 182.50).abs() < 0.1, "{projected:?}");
+        assert!((projected.1 - 341.41).abs() < 0.1, "{projected:?}");
+    }
+
+    #[test]
+    fn table_local_point_to_world_plane_uses_reverse_projection_math() {
+        let mut table_group = bitmap_group(1, "table", 137, 2, 365, 470);
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::ShortValue,
+            field_size: 4,
+            payload: EntryPayload::RawBytes([200_i16, 0_i16].into_iter().flat_map(i16::to_le_bytes).collect()),
+        });
+        table_group.entries.push(EntryData {
+            entry_type: FieldType::FloatArray,
+            field_size: 12,
+            payload: EntryPayload::RawBytes(
+                [700.0_f32, 183.0, 238.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+        });
+
+        let dat = DatFile {
+            app_name: "test".to_string(),
+            description: String::new(),
+            groups: vec![
+                raw_float_group(
+                    0,
+                    "camera_info",
+                    &[
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, -0.913545, 0.406737, 3.791398,
+                        0.0, -0.406737, -0.913545, 24.675402,
+                        -400.000702, 19.501307, 4303.969727,
+                    ],
+                ),
+                table_group,
+            ],
+        };
+
+        let point = dat
+            .table_local_point_to_world_plane(0, 182.50, 341.41, 0.0)
+            .expect("reverse projection should succeed");
+        assert!((point.0 - -7.020939).abs() < 0.1, "{point:?}");
+        assert!((point.1 - 10.084854).abs() < 0.1, "{point:?}");
     }
 
     #[test]

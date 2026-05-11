@@ -3,12 +3,20 @@ use crate::gameplay::components::group_name::*;
 
 use super::PinballTable;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BitmapCoordinateSpace {
+    #[default]
+    TableLocal,
+    WorldPlane { z: i16 },
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BitmapVisualState {
     pub group_name: &'static str,
     pub dest: RectI,
     pub depth_hint: i32,
     pub fallback_shade: u8,
+    pub coordinate_space: BitmapCoordinateSpace,
     pub use_native_position: bool,
     pub use_native_size: bool,
 }
@@ -176,6 +184,7 @@ impl PinballTable {
                 dest: RectI::new(bounds.x, bounds.y, size, size),
                 depth_hint: bounds.y,
                 fallback_shade: if ball.is_launched() { 255 } else { 180 },
+                coordinate_space: BitmapCoordinateSpace::TableLocal,
                 use_native_position: false,
                 use_native_size: false,
             }
@@ -286,6 +295,7 @@ impl PinballTable {
             dest: RectI::new(0, 0, 0, 0),
             depth_hint: i32::MIN,
             fallback_shade: 0,
+            coordinate_space: BitmapCoordinateSpace::TableLocal,
             use_native_position: true,
             use_native_size: true,
         }));
@@ -294,6 +304,7 @@ impl PinballTable {
             dest: RectI::new(0, 0, 0, 0),
             depth_hint: -10_000,
             fallback_shade: 0,
+            coordinate_space: BitmapCoordinateSpace::TableLocal,
             use_native_position: false,
             use_native_size: true,
         }));

@@ -10,8 +10,8 @@ use sdl2::video::Window;
 use crate::assets::DatFile;
 use crate::engine::geom::RectI;
 use crate::gameplay::{
-    BitmapVisualState, LightVisualState, NumberWidgetVisualState, SequenceVisualState, TableVisual,
-    TableVisualState, TextBoxVisualState,
+    BitmapCoordinateSpace, BitmapVisualState, LightVisualState, NumberWidgetVisualState,
+    SequenceVisualState, TableVisual, TableVisualState, TextBoxVisualState,
 };
 
 use self::scene::RenderScene;
@@ -180,14 +180,49 @@ impl RenderState {
         asset_revision: u64,
         sprite_visual: BitmapVisualState,
     ) -> Result<(), String> {
-        if let Some(dat_file) = dat_file
-            && let Some(bitmap_frame) =
-                dat_file.named_bitmap_frame(sprite_visual.group_name, resolution)
-        {
+        if let Some(dat_file) = dat_file {
             let mut dest = sprite_visual.dest;
+            let world_center_x = sprite_visual.dest.x as f32 + sprite_visual.dest.width as f32 * 0.5;
+            let world_center_y =
+                sprite_visual.dest.y as f32 + sprite_visual.dest.height as f32 * 0.5;
+            let bitmap_frame = match sprite_visual.coordinate_space {
+                BitmapCoordinateSpace::WorldPlane { z } => dat_file
+                    .depth_sorted_sequence_frame(
+                        sprite_visual.group_name,
+                        resolution,
+                        world_center_x,
+                        world_center_y,
+                        f32::from(z),
+                    )
+                    .and_then(|frame| {
+                        let bitmap = dat_file.get_bitmap(frame.group_index, resolution)?;
+                        Some((frame.group_index, bitmap.resolution))
+                    })
+                    .or_else(|| {
+                        dat_file
+                            .named_bitmap_frame(sprite_visual.group_name, resolution)
+                            .map(|frame| (frame.group_index, frame.bitmap_resolution))
+                    }),
+                BitmapCoordinateSpace::TableLocal => dat_file
+                    .named_bitmap_frame(sprite_visual.group_name, resolution)
+                    .map(|frame| (frame.group_index, frame.bitmap_resolution)),
+            };
+            if let Some((group_index, bitmap_resolution)) = bitmap_frame {
+            if let BitmapCoordinateSpace::WorldPlane { z } = sprite_visual.coordinate_space
+                && let Some(projected_dest) = dat_file.project_world_centered_rect_to_table_local(
+                    resolution,
+                    world_center_x,
+                    world_center_y,
+                    f32::from(z),
+                    sprite_visual.dest.width,
+                    sprite_visual.dest.height,
+                )
+            {
+                dest = projected_dest;
+            }
             if (sprite_visual.use_native_position || sprite_visual.use_native_size)
                 && let Some(bitmap) =
-                    dat_file.get_bitmap(bitmap_frame.group_index, bitmap_frame.bitmap_resolution)
+                    dat_file.get_bitmap(group_index, bitmap_resolution)
             {
                 if sprite_visual.use_native_position {
                     dest.x = i32::from(bitmap.x_position);
@@ -199,8 +234,8 @@ impl RenderState {
                 }
             }
             let sprite = SpriteRecord::at_dest(
-                bitmap_frame.group_index,
-                bitmap_frame.bitmap_resolution,
+                group_index,
+                bitmap_resolution,
                 dest,
                 sprite_visual.depth_hint,
             );
@@ -214,9 +249,10 @@ impl RenderState {
             )?;
             self.record_debug_entry(format!(
                 "bitmap:{}#{}",
-                sprite_visual.group_name, bitmap_frame.group_index
+                sprite_visual.group_name, group_index
             ));
             return Ok(());
+        }
         }
 
         self.record_debug_entry(format!("bitmap:{}:overlay", sprite_visual.group_name));
@@ -453,14 +489,20 @@ impl RenderState {
             return Ok(());
         };
 
-        let (table_origin_x, table_origin_y) =
-            dat_file.table_bitmap_origin(resolution).unwrap_or((0, 0));
-        let dest = RectI::new(
-            i32::from(bitmap.x_position) - table_origin_x,
-            i32::from(bitmap.y_position) - table_origin_y,
-            bitmap.width as u32,
-            bitmap.height as u32,
-        );
+        let dest = dat_file
+            .table_local_sequence_frame_rect(
+                selection.group_name,
+                resolution,
+                selection.frame_fraction,
+            )
+            .unwrap_or_else(|| {
+                RectI::new(
+                    i32::from(bitmap.x_position),
+                    i32::from(bitmap.y_position),
+                    bitmap.width as u32,
+                    bitmap.height as u32,
+                )
+            });
 
         let sprite = SpriteRecord::at_dest(group_index, bitmap.resolution, dest, dest.y);
         let texture_creator = canvas.texture_creator();
